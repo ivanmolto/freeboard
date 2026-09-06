@@ -10,6 +10,7 @@ import { TakerTraitsLib } from "@1inch/swap-vm/src/libs/TakerTraits.sol";
 import { SwapQuery, SwapRegisters } from "@1inch/swap-vm/src/libs/VM.sol";
 import { IStaticExtruction } from "@1inch/swap-vm/src/instructions/Extruction.sol";
 
+import { Addresses } from "../../src/constants/Addresses.sol";
 import { ProbeExtruction } from "../utils/ProbeExtruction.sol";
 import { ProgramLib } from "../utils/ProgramLib.sol";
 
@@ -35,16 +36,15 @@ interface IRouterAqua {
 ///      at 0 in the registers asserted below. Running the same program on an Aqua order is
 ///      T7/T9, not T2.
 contract ExtructionDispatchForkTest is Test {
-    /// @dev The deployed AquaSwapVMRouter. Not deployed by this test.
-    address internal constant ROUTER = 0x111111338c5091E8440b67B168bAe16a668AC0De;
-    /// @dev Canonical Aqua for that router, read from `AquaSwapVMRouter.AQUA()` on Sep 5.
-    address internal constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
+    /// @dev The deployed AquaSwapVMRouter. Not deployed by this test. Every address below
+    ///      comes from `src/constants/Addresses.sol`, where each is pinned by bytecode (T4);
+    ///      this test carries no literals of its own.
+    address internal constant ROUTER = Addresses.AQUA_SWAP_VM_ROUTER;
+    /// @dev Canonical Aqua for that router, read from `AquaSwapVMRouter.AQUA()`.
+    address internal constant AQUA = Addresses.AQUA;
 
-    address internal constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address internal constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-
-    /// @dev Earliest fork block permitted for this repo's fork tests.
-    uint256 internal constant MIN_FORK_BLOCK = 25_618_917;
+    address internal constant WETH = Addresses.WETH;
+    address internal constant DAI = Addresses.DAI;
 
     /// @dev Distinctive payload placed after the 20-byte target inside the instruction args.
     ///      The router must strip the target and hand exactly these bytes to the extruction.
@@ -64,7 +64,7 @@ contract ExtructionDispatchForkTest is Test {
 
     function setUp() public {
         uint256 forkBlock = vm.envUint("FORK_BLOCK");
-        require(forkBlock > MIN_FORK_BLOCK, "FORK_BLOCK must be > 25618917");
+        require(forkBlock >= Addresses.MIN_FORK_BLOCK, "FORK_BLOCK is before the router exists");
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
 
         assertGt(ROUTER.code.length, 0, "no code at the deployed AquaSwapVMRouter on this fork block");
