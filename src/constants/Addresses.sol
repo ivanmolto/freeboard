@@ -43,8 +43,8 @@ pragma solidity 0.8.30;
 ///
 /// @dev THE package.json PIN IS `github:1inch/aqua#v1.0.0` — THE DEPLOYED TAG
 ///      swap-vm v1.0.2 declares `github:1inch/aqua#0.1.0`, so yarn keeps that copy nested
-///      under `node_modules/@1inch/swap-vm/node_modules/@1inch/aqua` for swap-vm's own use,
-///      while `remappings.txt` sends every `@1inch/aqua/` import — ours and swap-vm's — to the
+///      in swap-vm's own nested node_modules (the 1inch/aqua package) for swap-vm's use,
+///      while `remappings.txt` sends every 1inch/aqua import — ours and swap-vm's — to the
 ///      top-level v1.0.0. That is safe because between tags 0.1.0 and v1.0.0 the ONLY changed
 ///      file under `src/` is `AquaRouter.sol` (`git diff --stat 0.1.0 v1.0.0 -- src/`: 1 file,
 ///      +9/-2). `Aqua.sol`, `interfaces/IAqua.sol`, `libs/Balance.sol` and `AquaApp.sol` are
