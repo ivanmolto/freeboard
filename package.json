@@ -1,0 +1,24 @@
+{
+  "name": "freeboard",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "yarn@1.22.22",
+  "description": "A collateral basket that rebalances itself toward safety as health factor falls, and gets paid a spread to do it. Built on 1inch Aqua / SwapVM.",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "test:fork": "forge test --match-path 'test/fork/*'",
+    "test:unit": "forge test --match-path 'test/unit/*'",
+    "snapshot": "forge snapshot --force --no-match-test \"testFuzz_*\""
+  },
+  "dependencies": {
+    "@1inch/swap-vm": "github:1inch/swap-vm#v1.0.2",
+    "@1inch/aqua": "github:1inch/aqua#0.1.0",
+    "@1inch/solidity-utils": "6.9.7",
+    "@openzeppelin/contracts": "5.4.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.11.0"
+  },
+  "resolutions": {
+    "elliptic": "6.6.1"
+  }
+}
