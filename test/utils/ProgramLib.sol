@@ -32,6 +32,27 @@ library ProgramLib {
     ///      Derivation: docs/NOTES-instructions.md §1.1.
     uint8 internal constant EXTRUCTION = 0x20;
 
+    /// @dev `XYCSwap._xycSwapXD` on the same table, by the same minus-one derivation: it is
+    ///      array literal position 18 (`AquaOpcodes.sol:55`) and therefore opcode 0x11.
+    ///      A constant-product swap over the two preloaded balance registers, taking no args:
+    ///
+    ///        function _xycSwapXD(Context memory ctx, bytes calldata /* args */) internal pure {
+    ///            require(ctx.swap.balanceIn > 0 && ctx.swap.balanceOut > 0, XYCSwapRequiresBothBalancesNonZero(...));
+    ///            if (ctx.query.isExactIn) {
+    ///                require(ctx.swap.amountOut == 0, XYCSwapRecomputeDetected());
+    ///                ctx.swap.amountOut = (
+    ///                    (ctx.swap.amountIn * ctx.swap.balanceOut) /
+    ///                    (ctx.swap.balanceIn + ctx.swap.amountIn)
+    ///                );
+    ///            } else { ... }
+    ///        }
+    ///
+    ///      (`src/instructions/XYCSwap.sol:17-33`). On an Aqua order those balances are the
+    ///      shipped strategy balances, which the router preloads from `AQUA.safeBalances`
+    ///      before the program runs (`SwapVM.sol:193-194`) — there is no balances instruction
+    ///      on this router.
+    uint8 internal constant XYC_SWAP_XD = 0x11;
+
     /// @dev argsLength is a single byte in the wire format, so args cannot exceed 255 bytes.
     error ProgramInstructionArgsTooLong(uint256 length);
 
@@ -55,5 +76,11 @@ library ProgramLib {
     // `args` parameter.
     function extruction(address target, bytes memory extructionArgs) internal pure returns (bytes memory) {
         return instruction(EXTRUCTION, abi.encodePacked(target, extructionArgs));
+    }
+
+    /// @notice Encode an `_xycSwapXD` instruction (opcode 0x11). It reads no args, so the
+    ///         encoded instruction is exactly the two wire-format header bytes: `0x1100`.
+    function xycSwapXD() internal pure returns (bytes memory) {
+        return instruction(XYC_SWAP_XD, "");
     }
 }
