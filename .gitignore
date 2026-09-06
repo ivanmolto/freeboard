@@ -4,4 +4,9 @@ cache/
 broadcast/
 .env
 *.log
-docs/
+docs/freeboard-v0.md
+docs/freeboard-v1.md
+docs/freeboard-v2.md
+docs/freeboard-repo-structure.md
+CLAUDE.md
+.DS_Store
