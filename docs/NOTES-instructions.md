@@ -3,7 +3,10 @@
 Source of every quotation below: the pinned dependency at
 `node_modules/@1inch/swap-vm`, resolved from `package.json`
 (`"@1inch/swap-vm": "github:1inch/swap-vm#v1.0.2"`), and
-`node_modules/@1inch/aqua` (`github:1inch/aqua#0.1.0`).
+`node_modules/@1inch/aqua` (`github:1inch/aqua#v1.0.0`, commit 81c26e4 — the
+deployed tag; swap-vm's own nested `aqua#0.1.0` is routed to it by
+`remappings.txt`, and `IAqua.sol` is byte-identical between the two tags, so
+every Aqua quotation below holds for both).
 
 `docs/PROGRAMS.md` in the tarball is 14,308 bytes, which is the v1.0.2 document
 and not `main`'s shorter rewrite. Nothing here is recalled from memory; every
@@ -844,9 +847,15 @@ And the README's blunt statement of the limit of the guarantee
 
 > - Deterministic execution is guaranteed only for deterministic instruction sets and deterministic external dependencies
 
-That sentence is the whole argument for resolving target weights off-chain in
-CRE and having the extruction read block-deterministic on-chain state, rather
-than staticcalling Aave for a live health factor from inside the pricing path.
+That sentence is the constraint the HF read has to satisfy, and it does
+(Rev 4, Sep 6 — the Chainlink CRE consumer is gone, see `CLAUDE.md` §A "Why
+the HF read is safe"): Aave's `getUserAccountData` is a view over the pool's
+own state and its oracle, so it is deterministic within a block, and
+`extruction()` is itself `view`. A `quote()` and a `swap()` in the same block
+therefore see the same health factor, which is exactly the "deterministic
+external dependency" the README allows. The non-deterministic case — Aave
+unable to compute HF — is handled by reverting the fill (T16), never by
+falling back to a stale or default target.
 
 The remaining invariants the composed program must still satisfy
 (`README.md:329-369`): Exact In/Out Symmetry, Swap Additivity, Quote/Swap
@@ -862,10 +871,9 @@ Freeboard's pricing must follow the same rounding convention; `_xycSwapXD`
 
 ## 5. Open items found while reading
 
-- `CLAUDE.md` cites `docs/DEPLOYED-OPCODES.md` as the full opcode table and
-  describes T5 as done. **That file does not exist in the repo.** The table in
-  §1.2 above is derived independently from source and agrees with the one
-  quoted in `CLAUDE.md`, so nothing is blocked; the file itself is still owed.
+- ~~`docs/DEPLOYED-OPCODES.md` did not exist when this file was written.~~
+  Landed Sep 6 (T5). The table in §1.2 above was derived independently from
+  source and agrees with it and with `CLAUDE.md`.
 - PROGRAMS.md's catalog examples are written against the full `Opcodes` set and
   open with balances instructions that **do not exist on `AquaSwapVMRouter`**
   (§1.4). They are not templates for our program.
