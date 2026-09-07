@@ -148,14 +148,37 @@ library Addresses {
     address internal constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
 
     // ---------------------------------------------------------------------------------
-    // Aave v3 — NOT YET VERIFIED. Named slot only.
+    // Aave v3 — verified Sep 7 (T8) by a closed round trip on the fork
     // ---------------------------------------------------------------------------------
 
-    // The Pool that `FreeboardExtruction._healthWeightedTarget` staticcalls for
-    // `getUserAccountData(query.maker)`. T8 verifies it: read the address off the mainnet
-    // PoolAddressesProvider at FORK_BLOCK, confirm it answers `getUserAccountData` for a
-    // real position on the fork, then uncomment this and fill it in. Left commented rather
-    // than stubbed to `address(0)` so it cannot be silently consumed before T8 lands.
-    //
-    // address internal constant AAVE_V3_POOL = 0x...; // T8
+    /// @dev Only the provider is an input (bgd-labs/aave-address-book `AaveV3Ethereum.sol`);
+    ///      everything else below is read from it on the fork. `HealthFactorForkTest` asserts
+    ///      `provider.getPool() == AAVE_V3_POOL`, `Pool.ADDRESSES_PROVIDER() == provider`, the
+    ///      same round trip for the oracle, and that the aTokens for WETH/WBTC/USDC name this
+    ///      Pool via `POOL()` and their underlyings via `UNDERLYING_ASSET_ADDRESS()`.
+    ///      `POOL_REVISION()` is 11 at FORK_BLOCK.
+    address internal constant AAVE_V3_POOL_ADDRESSES_PROVIDER = 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e;
+
+    /// @dev The Pool proxy `FreeboardExtruction._healthWeightedTarget` staticcalls for
+    ///      `getUserAccountData(query.maker)`. Always `query.maker`, never an address from args.
+    address internal constant AAVE_V3_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+
+    /// @dev `AaveOracle`. Freeboard reaches it only through the Pool; named here because
+    ///      `test/utils/OracleWarp.sol` drives HF by replacing a source on it.
+    address internal constant AAVE_V3_ORACLE = 0x54586bE62E3c3580375aE3723C145253060Ca0C2;
+
+    /// @dev `ACLManager` and the holder of its `DEFAULT_ADMIN_ROLE`. Test-fixture plumbing for
+    ///      `OracleWarp`, which needs `ASSET_LISTING_ADMIN_ROLE` to call `setAssetSources`.
+    address internal constant AAVE_V3_ACL_MANAGER = 0xc2aaCf6553D20d1e9d78E365AAba8032af9c85b0;
+    address internal constant AAVE_V3_ACL_ADMIN = 0x5300A1a15135EA4dc7aD5a167152C01EFc9b192A;
+
+    /// @dev `AaveOracle.BASE_CURRENCY_UNIT()`. `BASE_CURRENCY()` is `address(0)` = USD, so
+    ///      every `*Base` figure from `getUserAccountData` is USD at 1e8.
+    uint256 internal constant AAVE_BASE_CURRENCY_UNIT = 1e8;
+
+    /// @dev Liquidation thresholds in bps at FORK_BLOCK, so tests can predict HF from first
+    ///      principles. A governance change to any of these is a red test.
+    uint256 internal constant LT_WETH_BPS = 8300;
+    uint256 internal constant LT_WBTC_BPS = 7800;
+    uint256 internal constant LT_USDC_BPS = 7800;
 }
