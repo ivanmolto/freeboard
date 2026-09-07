@@ -4,7 +4,13 @@ optimizer      = true
 optimizer_runs = 700
 via_ir         = true
 fs_permissions = [
-    { access = "read-write", path = "./results" }
+    { access = "read-write", path = "./results" },
+    # Read-only, for test_Repo_ContainsZeroModifiedSwapVMSource (T9): walk the tracked
+    # Solidity, and pin the swap-vm files this repo compiles against to the v1.0.2 tag.
+    { access = "read", path = "./src" },
+    { access = "read", path = "./test" },
+    { access = "read", path = "./yarn.lock" },
+    { access = "read", path = "./node_modules/@1inch/swap-vm/src" }
 ]
 
 [profile.default.optimizer_details]
