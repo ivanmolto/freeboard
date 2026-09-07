@@ -11,7 +11,7 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 ///         public (`docs/freeboard-v0.md` §7).
 ///
 /// @dev FIXED-POINT CONVENTION. Everything is WAD (1e18), and there is one reason: Aave's
-///      `getUserAccountData` returns the health factor as WAD (`test/fork/HealthFactor.t.sol`,
+///      `getUserAccountData` returns the health factor as WAD (`test/fork/AaveHF.t.sol`,
 ///      `test_ReturnShape_DecimalsAreBase1e8ForValues_Bps_AndWadForHealthFactor`), so the HF
 ///      the extruction reads is compared against the breakpoints WITHOUT conversion. Weights
 ///      are WAD too: a row sums to exactly `ONE`, and an interpolated row does as well (see

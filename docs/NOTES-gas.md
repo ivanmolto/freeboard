@@ -1,7 +1,7 @@
 # NOTES-gas.md — T8
 
 How gas is measured in this repo's fork tests, and what the HF read costs.
-Source of every number: `test/fork/HealthFactor.t.sol` at `FORK_BLOCK=25900000`.
+Source of every number: `test/fork/AaveHF.t.sol` (`AaveHealthFactorForkTest`) at `FORK_BLOCK=25900000`.
 
 ---
 

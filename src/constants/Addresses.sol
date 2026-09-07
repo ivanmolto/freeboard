@@ -152,7 +152,7 @@ library Addresses {
     // ---------------------------------------------------------------------------------
 
     /// @dev Only the provider is an input (bgd-labs/aave-address-book `AaveV3Ethereum.sol`);
-    ///      everything else below is read from it on the fork. `HealthFactorForkTest` asserts
+    ///      everything else below is read from it on the fork. `AaveHealthFactorForkTest` asserts
     ///      `provider.getPool() == AAVE_V3_POOL`, `Pool.ADDRESSES_PROVIDER() == provider`, the
     ///      same round trip for the oracle, and that the aTokens for WETH/WBTC/USDC name this
     ///      Pool via `POOL()` and their underlyings via `UNDERLYING_ASSET_ADDRESS()`.

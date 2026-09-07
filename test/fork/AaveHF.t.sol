@@ -6,42 +6,16 @@ import { Vm } from "forge-std/Vm.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { Addresses } from "../../src/constants/Addresses.sol";
-import { IAaveV3Pool, IPoolAddressesProvider } from "../../src/interfaces/IAaveV3.sol";
+import { IPoolAddressesProvider } from "../../src/interfaces/IAaveV3.sol";
+import { IAaveV3Pool } from "../../src/interfaces/IAaveV3Pool.sol";
 
+import { IAaveProtocolDataProvider, IAToken, IAaveV3PoolFixture } from "../utils/AaveFixtures.sol";
 import { IAaveOracle, OracleWarp, WarpedPriceSource } from "../utils/OracleWarp.sol";
 
-interface IAToken {
-    function UNDERLYING_ASSET_ADDRESS() external view returns (address);
-    function POOL() external view returns (address);
-    function scaledBalanceOf(address user) external view returns (uint256);
-}
-
-interface IAaveProtocolDataProvider {
-    function getReserveConfigurationData(address asset)
-        external
-        view
-        returns (
-            uint256 decimals,
-            uint256 ltv,
-            uint256 liquidationThreshold,
-            uint256 liquidationBonus,
-            uint256 reserveFactor,
-            bool usageAsCollateralEnabled,
-            bool borrowingEnabled,
-            bool stableBorrowRateEnabled,
-            bool isActive,
-            bool isFrozen
-        );
-
-    function getReserveTokensAddresses(address asset)
-        external
-        view
-        returns (address aTokenAddress, address stableDebtTokenAddress, address variableDebtTokenAddress);
-}
-
-/// @notice The shape `FreeboardExtruction._healthWeightedTarget` will have: a `view` function on
-///         a foreign contract that low-level staticcalls the Pool, so a failure surfaces as
-///         `ok == false` rather than bubbling up.
+/// @notice The shape `FreeboardExtruction._healthFactor` has (T13): a `view` function on a
+///         foreign contract that low-level staticcalls the Pool, so a failure surfaces as
+///         `ok == false` rather than bubbling up. The difference is what each does with
+///         `false`: this spike reports it, the extruction reverts on it by name.
 contract StaticHfReader {
     function readHealthFactor(address pool, address user) external view returns (bool ok, uint256 healthFactor) {
         bytes memory ret;
@@ -71,15 +45,19 @@ contract StaticHfReader {
     }
 }
 
-/// @title HealthFactorForkTest — T8
+/// @title AaveHealthFactorForkTest — T8
 /// @notice The health-factor read, spiked against real Aave v3 on a mainnet fork. HF is on the
 ///         pricing path, so its return shape, gas, revert set, no-debt sentinel and staticcall
 ///         safety are properties of Freeboard's pricing.
 /// @dev Nothing here mocks Aave: positions are real `supply`/`borrow` calls, price moves go
 ///      through `AaveOracle.setAssetSources` (see `test/utils/OracleWarp.sol`). Gas methodology
 ///      is in `docs/NOTES-gas.md`.
-contract HealthFactorForkTest is Test {
-    IAaveV3Pool internal constant POOL = IAaveV3Pool(Addresses.AAVE_V3_POOL);
+/// @dev T13's own test — the read as `FreeboardExtruction` performs it, through the deployed
+///      router — is `test/fork/HealthFactor.t.sol`. This file is the protocol spike underneath it.
+contract AaveHealthFactorForkTest is Test {
+    /// @dev The fixture type: `IAaveV3Pool` plus the writes that build a position. The pricing
+    ///      path holds only the one-function `IAaveV3Pool`.
+    IAaveV3PoolFixture internal constant POOL = IAaveV3PoolFixture(Addresses.AAVE_V3_POOL);
     IPoolAddressesProvider internal constant PROVIDER =
         IPoolAddressesProvider(Addresses.AAVE_V3_POOL_ADDRESSES_PROVIDER);
     IAaveOracle internal constant ORACLE = IAaveOracle(Addresses.AAVE_V3_ORACLE);

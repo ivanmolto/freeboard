@@ -204,7 +204,7 @@ contract CurveTest is Test {
     }
 
     /// @dev Aave returns `type(uint256).max` for a position with no debt, by two code paths
-    ///      (`HealthFactorForkTest.test_NoDebt_ReturnsMaxUint256_ByBothRoutes`). No debt, no
+    ///      (`AaveHealthFactorForkTest.test_NoDebt_ReturnsMaxUint256_ByBothRoutes`). No debt, no
     ///      risk: the loosest target, with no arithmetic on the sentinel to overflow.
     function test_NoDebtSentinel_MaxUint256_ClampsToTheTop() public view {
         _assertRow(h.weightsAt(freeboard, type(uint256).max), 0.5e18, 0.3e18, 0.2e18, "no-debt sentinel");
