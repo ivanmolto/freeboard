@@ -94,7 +94,7 @@ library Addresses {
     uint256 internal constant ROUTER_RUNTIME_SIZE = 20_541;
 
     /// @dev Runtime size of `AQUA`, re-read Sep 6.
-    uint256 internal constant AQUA_RUNTIME_SIZE = 5_619;
+    uint256 internal constant AQUA_RUNTIME_SIZE = 5619;
 
     /// @dev Length of the trailing CBOR metadata blob on `AQUA`, including the two-byte
     ///      length suffix: 51 bytes of CBOR + 2 = 53.
@@ -163,8 +163,11 @@ library Addresses {
     ///      `getUserAccountData(query.maker)`. Always `query.maker`, never an address from args.
     address internal constant AAVE_V3_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
 
-    /// @dev `AaveOracle`. Freeboard reaches it only through the Pool; named here because
-    ///      `test/utils/OracleWarp.sol` drives HF by replacing a source on it.
+    /// @dev `AaveOracle`. NOT what the extruction reads from: `FreeboardExtruction` resolves the
+    ///      oracle from the provider on every fill (`getPriceOracle()`), exactly as the Pool does
+    ///      inside `getUserAccountData`, so a migration moves the health factor and the basket
+    ///      valuation together. Named here because `test/utils/OracleWarp.sol` drives HF by
+    ///      replacing a source on it, and asserted equal to the provider's answer at the pin.
     address internal constant AAVE_V3_ORACLE = 0x54586bE62E3c3580375aE3723C145253060Ca0C2;
 
     /// @dev `ACLManager` and the holder of its `DEFAULT_ADMIN_ROLE`. Test-fixture plumbing for

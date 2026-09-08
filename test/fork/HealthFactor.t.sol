@@ -12,11 +12,13 @@ import { Addresses } from "../../src/constants/Addresses.sol";
 import { FreeboardExtruction } from "../../src/FreeboardExtruction.sol";
 import { IPoolAddressesProvider } from "../../src/interfaces/IAaveV3.sol";
 import { IAaveV3Pool } from "../../src/interfaces/IAaveV3Pool.sol";
+import { Curve } from "../../src/libs/Curve.sol";
 
 import { IAaveProtocolDataProvider, IAaveV3PoolFixture } from "../utils/AaveFixtures.sol";
+import { Curves } from "../utils/Curves.sol";
 import { IAaveOracle } from "../utils/OracleWarp.sol";
+import { PricingReference } from "../utils/PricingReference.sol";
 import { ProgramBuilder } from "../utils/ProgramBuilder.sol";
-import { ProgramLib } from "../utils/ProgramLib.sol";
 
 /// @title HealthFactorForkTest — T13
 /// @notice The health-factor read as `FreeboardExtruction` actually performs it: from inside
@@ -30,9 +32,11 @@ import { ProgramLib } from "../utils/ProgramLib.sol";
 ///      in the extruction args, not in taker data, and not chooseable through the Aave address
 ///      either, which is the compile-time constant `Addresses.AAVE_V3_POOL`.
 ///
-///      Proving that from outside is the interesting part, because in this revision HF does not
-///      yet move the price (T14 does that), so it cannot be observed through `amountOut`. It is
-///      observed two ways instead, and they close each other's gap:
+///      It is observed three ways, and they close each other's gaps:
+///        THROUGH THE PRICE — since T14 the health factor moves the quote. The two makers ship
+///          IDENTICAL baskets under the same curve; the only difference between them is whose
+///          Aave debt they sit on, and their quotes differ by exactly the schedule's toward
+///          versus away spread.
 ///        POSITIVELY — `vm.expectCall` with the complete ABI encoding pins the exact address
 ///          argument the pool is called with during a fill;
 ///        NEGATIVELY — the OTHER maker's read is mocked to revert. Since an unreadable HF
@@ -40,9 +44,13 @@ import { ProgramLib } from "../utils/ProgramLib.sol";
 ///          touched that position. Reversing the mock reverts the fill, and the named error
 ///          carries the address the read was for.
 ///
-/// @dev Two makers, two positions, two Aqua strategies: one at HF ~2.00 (the top of the curve,
-///      50/30/20) and one at HF ~1.30 (the 30/16/54 breakpoint, most of the way down toward
-///      the 1.15 floor), built with real `supply`/`borrow`.
+/// @dev Two makers, two positions, two Aqua strategies: one at HF ~2.00 (the top of the curve)
+///      and one at HF ~1.30 (most of the way down toward the 1.15 floor), built with real
+///      `supply`/`borrow`. The baskets are two-leg, WETH / USDC, under `Curves.twoLeg`: 10 WETH
+///      and 40,000 USDC, about 38% / 62% at the pin. At HF 2.00 the target is 50 / 50, so a
+///      taker selling WETH moves both legs TOWARD target; at HF 1.30 it is 30 / 70, so the same
+///      fill moves both AWAY. Neither fill reaches a target, so each is one piece of the
+///      schedule and its price is the single-rate formula.
 contract HealthFactorForkTest is Test {
     address internal constant ROUTER = Addresses.AQUA_SWAP_VM_ROUTER;
     address internal constant AQUA = Addresses.AQUA;
@@ -67,15 +75,20 @@ contract HealthFactorForkTest is Test {
     /// @dev 1e-6 HF; the real error is flooring on the 1e-8 USD price grid. See T8.
     uint256 internal constant HF_TOLERANCE = 1e12;
 
-    /// @dev The shipped Aqua basket, per maker: 10 WETH and 30,000 USDC. Identical for both, so
+    /// @dev The shipped Aqua basket, per maker: 10 WETH and 40,000 USDC. Identical for both, so
     ///      the two positions are distinguishable ONLY by whose Aave debt they sit on.
     uint256 internal constant SHIPPED_WETH = 10 ether;
-    uint256 internal constant SHIPPED_USDC = 30_000e6;
+    uint256 internal constant SHIPPED_USDC = 40_000e6;
 
-    /// @dev The taker sells 1 WETH, exact-in. `FreeboardExtruction._price` is still pass-through
-    ///      at the shipped ratio (T9): 1e18 * 30_000e6 / 10e18 = 3_000e6.
+    /// @dev The taker sells 1 WETH, exact-in.
     uint256 internal constant AMOUNT_IN = 1 ether;
-    uint256 internal constant EXPECTED_AMOUNT_OUT = 3000e6;
+
+    /// @dev The per-fill cap committed in each maker's args. Distinct per maker, so the two
+    ///      programs differ in their bytes and not only in their `maker`.
+    uint16 internal constant MAX_SHIFT_TOP = 500;
+    uint16 internal constant MAX_SHIFT_MID = 501;
+
+    uint256 internal constant ONE = 1e18;
 
     /// @dev `getUserAccountData(address)`. Pinned so a change to `IAaveV3Pool`'s declaration —
     ///      a renamed parameter type, an added argument — is a red test and not a silent miss
@@ -94,6 +107,11 @@ contract HealthFactorForkTest is Test {
     ProgramBuilder.Position internal positionMid;
 
     address internal aWeth;
+
+    /// @dev The quote each maker's fill must settle at, by `PricingReference`: the same basket,
+    ///      the same fill, priced at HF 2.00 (toward) and at HF 1.30 (away).
+    uint256 internal expectedTop;
+    uint256 internal expectedMid;
 
     // -----------------------------------------------------------------------------------
     // Fixture
@@ -115,11 +133,15 @@ contract HealthFactorForkTest is Test {
         makerMid = makeAddr("freeboard-maker-hf-1.30");
         taker = makeAddr("freeboard-taker");
 
-        // The extruction args carry no address: 20 bytes of the target are stripped by the
-        // router, and what follows is the curve payload T14 defines. Distinct per maker so a
-        // crossed strategy would be visible in the calldata, not just in the outcome.
-        positionTop = _openPosition(makerTop, HF_TOP, hex"70");
-        positionMid = _openPosition(makerMid, HF_MID, hex"b1");
+        // The extruction args carry no address of a position: 20 bytes of the target are
+        // stripped by the router, and what follows is the curve, the token list and the cap
+        // (`FreeboardArgs`). The cap differs per maker so a crossed strategy would be visible
+        // in the calldata, not just in the outcome.
+        positionTop = _openPosition(makerTop, HF_TOP, MAX_SHIFT_TOP);
+        positionMid = _openPosition(makerMid, HF_MID, MAX_SHIFT_MID);
+
+        expectedTop = _referenceOut(_poolHealthFactor(makerTop));
+        expectedMid = _referenceOut(_poolHealthFactor(makerMid));
 
         deal(WETH, taker, 10 * AMOUNT_IN);
         vm.prank(taker);
@@ -140,7 +162,7 @@ contract HealthFactorForkTest is Test {
     function _openPosition(
         address maker,
         uint256 targetHf,
-        bytes memory extructionArgs
+        uint16 maxShiftBps
     )
         internal
         returns (ProgramBuilder.Position memory position)
@@ -166,11 +188,11 @@ contract HealthFactorForkTest is Test {
         deal(WETH, maker, SHIPPED_WETH);
         deal(USDC, maker, SHIPPED_USDC);
 
-        position = ProgramBuilder.aquaPosition(maker, ProgramLib.extruction(address(freeboard), extructionArgs));
+        position = ProgramBuilder.freeboardPosition(
+            maker, address(freeboard), Curves.twoLeg(), Curves.twoLegTokens(), maxShiftBps
+        );
 
-        address[] memory tokens = new address[](2);
-        tokens[0] = WETH;
-        tokens[1] = USDC;
+        address[] memory tokens = Curves.twoLegTokens();
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = SHIPPED_WETH;
         amounts[1] = SHIPPED_USDC;
@@ -187,6 +209,29 @@ contract HealthFactorForkTest is Test {
 
     function _poolHealthFactor(address who) internal view returns (uint256 healthFactor) {
         (,,,,, healthFactor) = POOL.getUserAccountData(who);
+    }
+
+    /// @dev `Curve.weightsAt` reads calldata.
+    function weightsAt(bytes calldata curve, uint256 hf) external pure returns (uint256[] memory) {
+        return Curve.weightsAt(curve, hf);
+    }
+
+    /// @dev The USDC the shipped basket pays for `AMOUNT_IN` WETH at health factor `hf`, by the
+    ///      independent integral-form reference, at the oracle prices of the pin.
+    function _referenceOut(uint256 hf) internal returns (uint256) {
+        uint256 unitWeth = ORACLE.getAssetPrice(WETH);
+        uint256 unitUsdc = ORACLE.getAssetPrice(USDC) * 1e12;
+        uint256 vW = SHIPPED_WETH * unitWeth;
+        uint256 vU = SHIPPED_USDC * unitUsdc;
+        uint256[] memory w = this.weightsAt(Curves.twoLeg(), hf);
+        return PricingReference.outValue(vW, vU, w[0], w[1], vW + vU, AMOUNT_IN * unitWeth) / unitUsdc;
+    }
+
+    /// @dev The single-rate price: the fill's value less `rate`, ceiled, in USDC. What
+    ///      `_referenceOut` reduces to when the fill crosses no target.
+    function _singleRateOut(uint256 rate) internal view returns (uint256) {
+        uint256 x = AMOUNT_IN * ORACLE.getAssetPrice(WETH);
+        return (x - (x * rate + ONE - 1) / ONE) / (ORACLE.getAssetPrice(USDC) * 1e12);
     }
 
     /// @dev The exact calldata `FreeboardExtruction._healthFactor` sends for a given maker.
@@ -231,17 +276,26 @@ contract HealthFactorForkTest is Test {
         emit log_named_decimal_uint("makerTop HF", hfTop, 18);
         emit log_named_decimal_uint("makerMid HF", hfMid, 18);
 
-        // -- 1. Positively: the pool is called with query.maker, byte for byte. -------------
+        // -- 1. Through the price: identical baskets, identical fills, different health
+        //       factors, so the quotes differ by exactly the schedule. ----------------------
+        assertEq(expectedTop, _singleRateOut(PricingReference.TOWARD), "at HF 2.00 the fill is one toward piece");
+        assertEq(expectedMid, _singleRateOut(PricingReference.AWAY), "at HF 1.30 the fill is one away piece");
+        assertGt(expectedTop, expectedMid, "the two health factors must be distinguishable by price");
+
+        emit log_named_decimal_uint("makerTop quote (USDC)", expectedTop, 6);
+        emit log_named_decimal_uint("makerMid quote (USDC)", expectedMid, 6);
+
+        // -- 2. Positively: the pool is called with query.maker, byte for byte. -------------
         //
         // expectCall matches on the complete ABI encoding, so this pins the address argument
         // and not merely the selector.
         vm.expectCall(Addresses.AAVE_V3_POOL, _readOf(makerTop));
-        assertEq(_quote(positionTop), EXPECTED_AMOUNT_OUT, "makerTop quote");
+        assertEq(_quote(positionTop), expectedTop, "makerTop quote");
 
         vm.expectCall(Addresses.AAVE_V3_POOL, _readOf(makerMid));
-        assertEq(_quote(positionMid), EXPECTED_AMOUNT_OUT, "makerMid quote");
+        assertEq(_quote(positionMid), expectedMid, "makerMid quote");
 
-        // -- 2. Negatively: makerMid's read is broken; makerTop is untouched by it. ---------
+        // -- 3. Negatively: makerMid's read is broken; makerTop is untouched by it. ---------
         //
         // An unreadable HF reverts the fill, so a fill that still settles is a fill that never
         // read that position. This is the assertion `expectCall` cannot make: it can require a
@@ -249,32 +303,32 @@ contract HealthFactorForkTest is Test {
         vm.mockCallRevert(Addresses.AAVE_V3_POOL, _readOf(makerMid), POOL_DOWN);
 
         vm.expectCall(Addresses.AAVE_V3_POOL, _readOf(makerTop));
-        assertEq(_quote(positionTop), EXPECTED_AMOUNT_OUT, "makerTop must not depend on makerMid's position");
+        assertEq(_quote(positionTop), expectedTop, "makerTop must not depend on makerMid's position");
 
         vm.expectRevert(abi.encodeWithSelector(FreeboardExtruction.FreeboardHealthFactorUnreadable.selector, makerMid));
         _quote(positionMid);
 
-        // -- 3. And the mirror image, so neither direction is an accident. ------------------
+        // -- 4. And the mirror image, so neither direction is an accident. ------------------
         vm.clearMockedCalls();
         vm.mockCallRevert(Addresses.AAVE_V3_POOL, _readOf(makerTop), POOL_DOWN);
 
         vm.expectCall(Addresses.AAVE_V3_POOL, _readOf(makerMid));
-        assertEq(_quote(positionMid), EXPECTED_AMOUNT_OUT, "makerMid must not depend on makerTop's position");
+        assertEq(_quote(positionMid), expectedMid, "makerMid must not depend on makerTop's position");
 
         vm.expectRevert(abi.encodeWithSelector(FreeboardExtruction.FreeboardHealthFactorUnreadable.selector, makerTop));
         _quote(positionTop);
 
-        // -- 4. The same on the settlement path, with real tokens moving. -------------------
+        // -- 5. The same on the settlement path, with real tokens moving. -------------------
         vm.clearMockedCalls();
 
         uint256 takerUsdcBefore = IERC20(USDC).balanceOf(taker);
         uint256 makerUsdcBefore = IERC20(USDC).balanceOf(makerMid);
 
         vm.expectCall(Addresses.AAVE_V3_POOL, _readOf(makerMid));
-        assertEq(_swap(positionMid), EXPECTED_AMOUNT_OUT, "makerMid swap");
+        assertEq(_swap(positionMid), expectedMid, "makerMid swap");
 
-        assertEq(IERC20(USDC).balanceOf(taker) - takerUsdcBefore, EXPECTED_AMOUNT_OUT, "taker received USDC");
-        assertEq(makerUsdcBefore - IERC20(USDC).balanceOf(makerMid), EXPECTED_AMOUNT_OUT, "maker paid USDC");
+        assertEq(IERC20(USDC).balanceOf(taker) - takerUsdcBefore, expectedMid, "taker received USDC");
+        assertEq(makerUsdcBefore - IERC20(USDC).balanceOf(makerMid), expectedMid, "maker paid USDC");
 
         // The read is a read: settling did not change either Aave position.
         assertApproxEqAbs(_poolHealthFactor(makerMid), hfMid, HF_TOLERANCE, "the fill moved the maker's Aave debt");
@@ -285,18 +339,21 @@ contract HealthFactorForkTest is Test {
     // The address is not an input to the program
     // -----------------------------------------------------------------------------------
 
-    /// @notice A strategy carrying another maker's address in its extruction args still reads
-    ///         its own position. The args are not consulted for the subject of the read.
-    /// @dev The strongest form of the claim the natspec makes. A third maker ships a program
-    ///      whose args are exactly `makerMid`'s 20 bytes — the shape a redirect would take if
-    ///      `_healthFactor` took its address from `args` instead of from `query.maker`. With
-    ///      `makerMid`'s read mocked to revert, the fill settles anyway, and `expectCall` pins
-    ///      the read to the shipper's own address.
+    /// @notice A program byte-identical to another maker's still reads the SHIPPER's position.
+    ///         The program has no slot for a subject; the subject is whoever shipped it.
+    /// @dev The strongest form of the claim the natspec makes. A third maker at HF 2.00 ships
+    ///      exactly `makerMid`'s program bytes — the same curve, tokens and cap, so the only
+    ///      difference between the two orders is `maker`. With `makerMid`'s read mocked to
+    ///      revert, the fill settles anyway, `expectCall` pins the read to the shipper's own
+    ///      address, and the price is `makerTop`'s (HF 2.00, toward), not `makerMid`'s (HF
+    ///      1.30, away): the health factor that priced it is the shipper's.
     function test_ArgsCannotRedirectTheReadToAnotherPosition() public {
-        address attacker = makeAddr("freeboard-maker-args-carry-another-address");
-        ProgramBuilder.Position memory redirect = _openPosition(attacker, HF_TOP, abi.encodePacked(makerMid));
+        address attacker = makeAddr("freeboard-maker-with-another-makers-program");
+        ProgramBuilder.Position memory redirect = _openPosition(attacker, HF_TOP, MAX_SHIFT_MID);
 
-        assertEq(redirect.order.data.length, 2 + 20 + 20, "the program carries a second address after the target");
+        assertEq(redirect.order.data, positionMid.order.data, "the two programs must be byte-identical");
+        assertEq(redirect.extructionArgs, positionMid.extructionArgs, "the two args must be byte-identical");
+        assertNotEq(redirect.strategyHash, positionMid.strategyHash, "and still be two strategies, by maker");
 
         vm.mockCallRevert(Addresses.AAVE_V3_POOL, _readOf(makerMid), POOL_DOWN);
 
@@ -304,7 +361,8 @@ contract HealthFactorForkTest is Test {
         vm.prank(taker);
         (, uint256 amountOut,) = ISwapVM(ROUTER).quote(redirect.order, WETH, USDC, AMOUNT_IN, _takerTraitsAndData());
 
-        assertEq(amountOut, EXPECTED_AMOUNT_OUT, "the read followed the args instead of query.maker");
+        assertEq(amountOut, expectedTop, "the price must be the shipper's health factor, not the program author's");
+        assertNotEq(amountOut, expectedMid, "the read followed the program instead of query.maker");
     }
 
     // -----------------------------------------------------------------------------------
@@ -372,10 +430,11 @@ contract HealthFactorForkTest is Test {
     }
 
     /// @notice A maker with no Aave debt is read, not skipped: the sentinel comes back and the
-    ///         fill proceeds.
+    ///         fill proceeds, at the top of the curve.
     /// @dev No debt means no deleveraging, so the top of the curve is the correct target — T16
-    ///      owns `test_NoDebt_PricesAtTopOfCurve` once the curve prices. What matters here is
-    ///      that the read still happens and `type(uint256).max` is not mistaken for a failure.
+    ///      owns `test_NoDebt_PricesAtTopOfCurve`. What matters here is that the read still
+    ///      happens and `type(uint256).max` is not mistaken for a failure; that the price equals
+    ///      `makerTop`'s, whose HF 2.00 is the top breakpoint, follows.
     function test_NoDebt_ReadsTheSentinelAndFillsAnyway() public {
         address saver = makeAddr("freeboard-maker-no-aave-position");
         assertEq(_poolHealthFactor(saver), type(uint256).max, "an untouched account is not the no-debt sentinel");
@@ -383,12 +442,11 @@ contract HealthFactorForkTest is Test {
         deal(WETH, saver, SHIPPED_WETH);
         deal(USDC, saver, SHIPPED_USDC);
 
-        ProgramBuilder.Position memory position =
-            ProgramBuilder.aquaPosition(saver, ProgramLib.extruction(address(freeboard), hex"00"));
+        ProgramBuilder.Position memory position = ProgramBuilder.freeboardPosition(
+            saver, address(freeboard), Curves.twoLeg(), Curves.twoLegTokens(), MAX_SHIFT_TOP
+        );
 
-        address[] memory tokens = new address[](2);
-        tokens[0] = WETH;
-        tokens[1] = USDC;
+        address[] memory tokens = Curves.twoLegTokens();
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = SHIPPED_WETH;
         amounts[1] = SHIPPED_USDC;
@@ -402,6 +460,6 @@ contract HealthFactorForkTest is Test {
         vm.prank(taker);
         (, uint256 amountOut,) = ISwapVM(ROUTER).swap(position.order, WETH, USDC, AMOUNT_IN, _takerTraitsAndData());
 
-        assertEq(amountOut, EXPECTED_AMOUNT_OUT, "a no-debt maker's fill must settle");
+        assertEq(amountOut, expectedTop, "a no-debt maker's fill must settle at the top of the curve");
     }
 }

@@ -13,6 +13,11 @@ import { IExtruction, IStaticExtruction } from "@1inch/swap-vm/src/instructions/
 
 import { Addresses } from "../../src/constants/Addresses.sol";
 import { FreeboardExtruction } from "../../src/FreeboardExtruction.sol";
+import { IAaveV3Oracle } from "../../src/interfaces/IAaveV3Oracle.sol";
+import { Curve } from "../../src/libs/Curve.sol";
+
+import { Curves } from "../utils/Curves.sol";
+import { PricingReference } from "../utils/PricingReference.sol";
 import { ProgramBuilder } from "../utils/ProgramBuilder.sol";
 import { ProgramLib } from "../utils/ProgramLib.sol";
 
@@ -44,10 +49,19 @@ import { ProgramLib } from "../utils/ProgramLib.sol";
 ///           interface with exactly those inputs and compared field by field;
 ///        3. the router's settled amounts on both paths equal those outputs.
 ///
-/// @dev THE PROGRAM IS ONE INSTRUCTION. `[0x20][0x19][FreeboardExtruction][5 arg bytes]`, no
-///      fee opcode, nothing after it: NOTES-instructions.md §3.4 shows a fee opcode nests what
-///      follows and re-prices after it, so the registers our extruction returns would not be
-///      the settled ones. Twenty-seven bytes, pinned exactly below.
+/// @dev THE PROGRAM IS ONE INSTRUCTION. `[0x20][0xa0][FreeboardExtruction][140 arg bytes]`,
+///      no fee opcode, nothing after it: NOTES-instructions.md §3.4 shows a fee opcode nests
+///      what follows and re-prices after it, so the registers our extruction returns would not
+///      be the settled ones. 162 bytes, pinned exactly below. The args are `FreeboardArgs`
+///      over the two-leg WETH / USDC curve (T14); the maker has no Aave debt, so the sentinel
+///      health factor prices at the top row, 50 / 50.
+///
+/// @dev THE BASKET CROSSES A TARGET MID-FILL. 10 WETH against USDC worth 11 WETH: WETH is half
+///      a WETH under its 50% target and USDC half a WETH over, so the first half of the taker's
+///      1 WETH moves both legs toward target and the second half moves both away. The expected
+///      amount is derived by `PricingReference` — the integral form — and the extruction, which
+///      prices by distance before and after, must land on the same wei. After the fill both
+///      legs are past their targets and the next quote is one away-priced piece: worse.
 contract QuoteSwapConsistencyForkTest is Test {
     /// @dev Every address comes from `src/constants/Addresses.sol`; no literals of our own.
     address internal constant ROUTER = Addresses.AQUA_SWAP_VM_ROUTER;
@@ -55,29 +69,24 @@ contract QuoteSwapConsistencyForkTest is Test {
     address internal constant WETH = Addresses.WETH;
     address internal constant USDC = Addresses.USDC;
 
-    /// @dev The shipped basket: 10 WETH (18 decimals) and 30,000 USDC (6 decimals).
+    /// @dev The shipped basket: 10 WETH (18 decimals) and, in USDC (6 decimals), the oracle
+    ///      value of 11 WETH — computed in `setUp` from the pin's prices.
     uint256 internal constant SHIPPED_WETH = 10 ether;
-    uint256 internal constant SHIPPED_USDC = 30_000e6;
+    uint256 internal shippedUsdc;
 
     /// @dev The taker sells 1 WETH for USDC, exact-in.
     uint256 internal constant AMOUNT_IN = 1 ether;
 
-    /// @dev `FreeboardExtruction._price`, exact-in, at the shipped ratio:
-    ///        amountOut = amountIn * balanceOut / balanceIn = 1e18 * 30_000e6 / 10e18 = 3_000e6.
-    ///      A literal, so a change in the extruction's arithmetic is a red assertion.
-    uint256 internal constant EXPECTED_AMOUNT_OUT = 3000e6;
+    uint16 internal constant MAX_SHIFT_BPS = 500;
+    uint256 internal constant ONE = 1e18;
 
-    /// @dev The same price AFTER the fill, from the balances Aqua then holds:
-    ///        1e18 * 27_000e6 / 11e18 = 2_454_545_454 (floor).
-    ///      Quoted in the same block as the fill, it proves the extruction prices from the
-    ///      live Aqua balances the router preloads, not from anything it remembers — it has
-    ///      nothing to remember with.
-    uint256 internal constant EXPECTED_AMOUNT_OUT_AFTER = 2_454_545_454;
+    /// @dev The USDC the fill must settle at, by `PricingReference` from the shipped basket:
+    ///      half a WETH of value at 10 bps, half at 100 bps. Fixed in `setUp`, asserted against
+    ///      the router and the extruction below.
+    uint256 internal expectedAmountOut;
 
-    /// @dev Distinctive payload after the 20-byte target, and distinctive taker
-    ///      `instructionsArgs`. Both reach the extruction; both are ignored by it. They are
-    ///      non-empty so the calldata match below covers the variable-length tail too.
-    bytes internal constant EXTRUCTION_ARGS = hex"f1eeb0a4d0";
+    /// @dev Taker `instructionsArgs`. They reach the extruction as `takerData` and are ignored
+    ///      by it; non-empty so the calldata match below covers the variable-length tail too.
     bytes internal constant INSTRUCTIONS_ARGS = hex"c0ffee";
 
     address internal maker = address(0xB0A2E4);
@@ -85,6 +94,7 @@ contract QuoteSwapConsistencyForkTest is Test {
 
     FreeboardExtruction internal freeboard;
     ProgramBuilder.Position internal position;
+    IAaveV3Oracle internal oracle = IAaveV3Oracle(Addresses.AAVE_V3_ORACLE);
 
     function setUp() public {
         uint256 forkBlock = vm.envUint("FORK_BLOCK");
@@ -97,7 +107,12 @@ contract QuoteSwapConsistencyForkTest is Test {
 
         // The one contract of ours on this fork. No constructor arguments: nothing to configure.
         freeboard = new FreeboardExtruction();
-        position = ProgramBuilder.aquaPosition(maker, ProgramLib.extruction(address(freeboard), EXTRUCTION_ARGS));
+        position = ProgramBuilder.freeboardPosition(
+            maker, address(freeboard), Curves.twoLeg(), Curves.twoLegTokens(), MAX_SHIFT_BPS
+        );
+
+        shippedUsdc = 11 * oracle.getAssetPrice(WETH) * 1e6 / oracle.getAssetPrice(USDC);
+        expectedAmountOut = _referenceOut(SHIPPED_WETH, shippedUsdc);
 
         vm.label(ROUTER, "AquaSwapVMRouter");
         vm.label(AQUA, "Aqua");
@@ -115,10 +130,18 @@ contract QuoteSwapConsistencyForkTest is Test {
     function test_QuoteAndSwapPaths_ReturnIdenticalRegisters() public {
         // -- 0. The program: one _extruction, last, no fee opcode. --------------------------
         bytes memory program = position.order.data;
-        assertEq(program, abi.encodePacked(hex"2019", address(freeboard), EXTRUCTION_ARGS), "program bytes drifted");
-        assertEq(program.length, 2 + 20 + EXTRUCTION_ARGS.length, "the program is exactly one instruction");
+        bytes memory args = position.extructionArgs;
+        assertEq(args.length, 140, "two-leg FreeboardArgs: 98-byte curve, two tokens, the cap");
+        assertEq(program, abi.encodePacked(hex"20a0", address(freeboard), args), "program bytes drifted");
+        assertEq(program.length, 2 + 20 + args.length, "the program is exactly one instruction");
         assertEq(uint8(program[0]), ProgramLib.EXTRUCTION, "the one instruction is _extruction");
         uint256 expectedNextPC = program.length;
+
+        // The fill crosses both targets half-way, so the reference has two pieces and the
+        // price sits strictly between the toward and away schedules.
+        uint256 fairOut = AMOUNT_IN * oracle.getAssetPrice(WETH) / (oracle.getAssetPrice(USDC) * 1e12);
+        assertLt(expectedAmountOut, fairOut * (ONE - PricingReference.TOWARD) / ONE, "below the toward price");
+        assertGt(expectedAmountOut, fairOut * (ONE - PricingReference.AWAY) / ONE, "above the away price");
 
         // -- 1. Ship, and prove the ship -> execute round trip. ---------------------------
         _ship();
@@ -128,7 +151,7 @@ contract QuoteSwapConsistencyForkTest is Test {
         // The maker's Aqua allowance is what makes the position fillable (Aqua.sol:63-70);
         // ship() consumed none of it.
         vm.prank(maker);
-        IERC20(USDC).approve(AQUA, SHIPPED_USDC);
+        IERC20(USDC).approve(AQUA, shippedUsdc);
 
         deal(WETH, taker, AMOUNT_IN);
         vm.prank(taker);
@@ -145,7 +168,7 @@ contract QuoteSwapConsistencyForkTest is Test {
             orderHash: orderHash, maker: maker, taker: taker, tokenIn: WETH, tokenOut: USDC, isExactIn: true
         });
         SwapRegisters memory entry = SwapRegisters({
-            balanceIn: SHIPPED_WETH, balanceOut: SHIPPED_USDC, amountIn: AMOUNT_IN, amountOut: 0, amountNetPulled: 0
+            balanceIn: SHIPPED_WETH, balanceOut: shippedUsdc, amountIn: AMOUNT_IN, amountOut: 0, amountNetPulled: 0
         });
 
         uint256 blockNumber = block.number;
@@ -156,9 +179,7 @@ contract QuoteSwapConsistencyForkTest is Test {
         // byte-for-byte match of every argument the router passes.
         vm.expectCall(
             address(freeboard),
-            abi.encodeCall(
-                IStaticExtruction.extruction, (true, expectedNextPC, query, entry, EXTRUCTION_ARGS, INSTRUCTIONS_ARGS)
-            )
+            abi.encodeCall(IStaticExtruction.extruction, (true, expectedNextPC, query, entry, args, INSTRUCTIONS_ARGS))
         );
         vm.prank(taker);
         (uint256 quotedIn, uint256 quotedOut, bytes32 quotedHash) =
@@ -166,16 +187,14 @@ contract QuoteSwapConsistencyForkTest is Test {
 
         assertEq(quotedHash, orderHash, "quote() orderHash");
         assertEq(quotedIn, AMOUNT_IN, "quote() amountIn");
-        assertEq(quotedOut, EXPECTED_AMOUNT_OUT, "quote() amountOut at the shipped ratio");
+        assertEq(quotedOut, expectedAmountOut, "quote() amountOut by the health-weighted target");
 
         // -- 4. swap(): the non-static path, same block, same inputs. -----------------------
         assertEq(block.number, blockNumber, "quote and swap must run in the same block");
 
         vm.expectCall(
             address(freeboard),
-            abi.encodeCall(
-                IExtruction.extruction, (false, expectedNextPC, query, entry, EXTRUCTION_ARGS, INSTRUCTIONS_ARGS)
-            )
+            abi.encodeCall(IExtruction.extruction, (false, expectedNextPC, query, entry, args, INSTRUCTIONS_ARGS))
         );
 
         Balances memory before = _balances();
@@ -193,7 +212,7 @@ contract QuoteSwapConsistencyForkTest is Test {
         // The router settles exactly what the extruction returns (Extruction.sol:96, :105,
         // and nothing runs after it). Call it through each interface with the inputs the
         // router was just proven to pass, and compare every register.
-        uint256 pricedAmountOut = _assertIdenticalRegistersThroughBothInterfaces(expectedNextPC, query, entry);
+        uint256 pricedAmountOut = _assertIdenticalRegistersThroughBothInterfaces(expectedNextPC, query, entry, args);
 
         // And that is the amount the router settled on both paths.
         assertEq(quotedOut, pricedAmountOut, "quote() settled the static path's registers");
@@ -203,10 +222,16 @@ contract QuoteSwapConsistencyForkTest is Test {
         _assertRealDeltas(before, orderHash);
 
         // -- 7. Same block, moved basket: the quote follows Aqua's balances. ----------------
+        //
+        // Quoted in the same block as the fill, this proves the extruction prices from the
+        // live Aqua balances the router preloads, not from anything it remembers — it has
+        // nothing to remember with. Both legs are now past their targets: one away piece.
         assertEq(block.number, blockNumber, "still the same block");
+        uint256 expectedAfter = _referenceOut(SHIPPED_WETH + AMOUNT_IN, shippedUsdc - quotedOut);
         vm.prank(taker);
         (, uint256 quotedOutAfter,) = ISwapVM(ROUTER).quote(position.order, WETH, USDC, AMOUNT_IN, takerTraitsAndData);
-        assertEq(quotedOutAfter, EXPECTED_AMOUNT_OUT_AFTER, "the quote must reprice from the live Aqua balances");
+        assertEq(quotedOutAfter, expectedAfter, "the quote must reprice from the live Aqua balances");
+        assertEq(quotedOutAfter, _singleRateOut(PricingReference.AWAY), "one away piece, to the wei");
         assertLt(quotedOutAfter, quotedOut, "selling into the basket must worsen the next quote");
     }
 
@@ -267,17 +292,17 @@ contract QuoteSwapConsistencyForkTest is Test {
     function _assertIdenticalRegistersThroughBothInterfaces(
         uint256 expectedNextPC,
         SwapQuery memory query,
-        SwapRegisters memory entry
+        SwapRegisters memory entry,
+        bytes memory args
     )
         internal
         returns (uint256 pricedAmountOut)
     {
         (uint256 staticNextPC, uint256 staticChopped, SwapRegisters memory viaStatic) = IStaticExtruction(
                 address(freeboard)
-            ).extruction(true, expectedNextPC, query, entry, EXTRUCTION_ARGS, INSTRUCTIONS_ARGS);
-        (uint256 nonStaticNextPC, uint256 nonStaticChopped, SwapRegisters memory viaNonStatic) = IExtruction(
-                address(freeboard)
-            ).extruction(false, expectedNextPC, query, entry, EXTRUCTION_ARGS, INSTRUCTIONS_ARGS);
+            ).extruction(true, expectedNextPC, query, entry, args, INSTRUCTIONS_ARGS);
+        (uint256 nonStaticNextPC, uint256 nonStaticChopped, SwapRegisters memory viaNonStatic) =
+            IExtruction(address(freeboard)).extruction(false, expectedNextPC, query, entry, args, INSTRUCTIONS_ARGS);
 
         assertEq(staticNextPC, expectedNextPC, "static path must return nextPC unchanged");
         assertEq(nonStaticNextPC, expectedNextPC, "non-static path must return nextPC unchanged");
@@ -297,7 +322,7 @@ contract QuoteSwapConsistencyForkTest is Test {
         assertEq(viaStatic.balanceOut, entry.balanceOut, "balanceOut must be copied forward");
         assertEq(viaStatic.amountIn, entry.amountIn, "amountIn must be copied forward");
         assertEq(viaStatic.amountNetPulled, entry.amountNetPulled, "amountNetPulled must be copied forward");
-        assertEq(viaStatic.amountOut, EXPECTED_AMOUNT_OUT, "amountOut is the priced register");
+        assertEq(viaStatic.amountOut, expectedAmountOut, "amountOut is the priced register");
 
         pricedAmountOut = viaStatic.amountOut;
 
@@ -308,9 +333,9 @@ contract QuoteSwapConsistencyForkTest is Test {
         SwapRegisters memory perturbed = entry;
         perturbed.amountNetPulled = 7;
         (,, SwapRegisters memory perturbedViaStatic) = IStaticExtruction(address(freeboard))
-            .extruction(true, expectedNextPC, query, perturbed, EXTRUCTION_ARGS, INSTRUCTIONS_ARGS);
-        (,, SwapRegisters memory perturbedViaNonStatic) = IExtruction(address(freeboard))
-            .extruction(false, expectedNextPC, query, perturbed, EXTRUCTION_ARGS, INSTRUCTIONS_ARGS);
+            .extruction(true, expectedNextPC, query, perturbed, args, INSTRUCTIONS_ARGS);
+        (,, SwapRegisters memory perturbedViaNonStatic) =
+            IExtruction(address(freeboard)).extruction(false, expectedNextPC, query, perturbed, args, INSTRUCTIONS_ARGS);
         assertEq(perturbedViaStatic.amountNetPulled, 7, "amountNetPulled must be copied forward (static)");
         assertEq(perturbedViaNonStatic.amountNetPulled, 7, "amountNetPulled must be copied forward (non-static)");
         assertEq(perturbedViaStatic.amountOut, pricedAmountOut, "amountNetPulled must not influence the price");
@@ -337,8 +362,8 @@ contract QuoteSwapConsistencyForkTest is Test {
         Balances memory after_ = _balances();
         assertEq(before.takerWeth - after_.takerWeth, AMOUNT_IN, "taker paid WETH");
         assertEq(after_.makerWeth - before.makerWeth, AMOUNT_IN, "maker received WETH");
-        assertEq(after_.takerUsdc - before.takerUsdc, EXPECTED_AMOUNT_OUT, "taker received USDC");
-        assertEq(before.makerUsdc - after_.makerUsdc, EXPECTED_AMOUNT_OUT, "maker paid USDC");
+        assertEq(after_.takerUsdc - before.takerUsdc, expectedAmountOut, "taker received USDC");
+        assertEq(before.makerUsdc - after_.makerUsdc, expectedAmountOut, "maker paid USDC");
 
         assertEq(IERC20(WETH).balanceOf(ROUTER), 0, "router must not retain WETH");
         assertEq(IERC20(USDC).balanceOf(ROUTER), 0, "router must not retain USDC");
@@ -347,19 +372,17 @@ contract QuoteSwapConsistencyForkTest is Test {
 
         (uint256 aquaWeth, uint256 aquaUsdc) = IAqua(AQUA).safeBalances(maker, ROUTER, orderHash, WETH, USDC);
         assertEq(aquaWeth, SHIPPED_WETH + AMOUNT_IN, "Aqua WETH balance after the push");
-        assertEq(aquaUsdc, SHIPPED_USDC - EXPECTED_AMOUNT_OUT, "Aqua USDC balance after the pull");
+        assertEq(aquaUsdc, shippedUsdc - expectedAmountOut, "Aqua USDC balance after the pull");
     }
 
     function _ship() internal {
         deal(WETH, maker, SHIPPED_WETH);
-        deal(USDC, maker, SHIPPED_USDC);
+        deal(USDC, maker, shippedUsdc);
 
-        address[] memory tokens = new address[](2);
-        tokens[0] = WETH;
-        tokens[1] = USDC;
+        address[] memory tokens = Curves.twoLegTokens();
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = SHIPPED_WETH;
-        amounts[1] = SHIPPED_USDC;
+        amounts[1] = shippedUsdc;
 
         vm.prank(maker);
         bytes32 shippedHash = IAqua(AQUA).ship(ROUTER, position.strategy, tokens, amounts);
@@ -378,6 +401,31 @@ contract QuoteSwapConsistencyForkTest is Test {
         args.useTransferFromAndAquaPush = true;
         args.instructionsArgs = INSTRUCTIONS_ARGS;
         return TakerTraitsLib.build(args);
+    }
+
+    /// @dev `Curve.weightsAt` reads calldata.
+    function weightsAt(bytes calldata curve, uint256 hf) external pure returns (uint256[] memory) {
+        return Curve.weightsAt(curve, hf);
+    }
+
+    /// @dev The USDC a basket of `weth` and `usdc` pays for `AMOUNT_IN` WETH at the top of the
+    ///      two-leg curve (the maker has no debt: the sentinel HF), by the integral-form
+    ///      reference at the pin's oracle prices.
+    function _referenceOut(uint256 weth, uint256 usdc) internal returns (uint256) {
+        uint256 unitWeth = oracle.getAssetPrice(WETH);
+        uint256 unitUsdc = oracle.getAssetPrice(USDC) * 1e12;
+        uint256 vW = weth * unitWeth;
+        uint256 vU = usdc * unitUsdc;
+        uint256[] memory w = this.weightsAt(Curves.twoLeg(), type(uint256).max);
+        return PricingReference.outValue(vW, vU, w[0], w[1], vW + vU, AMOUNT_IN * unitWeth) / unitUsdc;
+    }
+
+    /// @dev The single-rate price of `AMOUNT_IN` WETH: the fill's value less `rate`, the spread
+    ///      ceiled and the output floored, in USDC. What `_referenceOut` reduces to when the
+    ///      fill crosses no target.
+    function _singleRateOut(uint256 rate) internal view returns (uint256) {
+        uint256 x = AMOUNT_IN * oracle.getAssetPrice(WETH);
+        return (x - (x * rate + ONE - 1) / ONE) / (oracle.getAssetPrice(USDC) * 1e12);
     }
 
     /// @dev Walks `root` and reads every `.sol` file, failing on any needle. Returns the
