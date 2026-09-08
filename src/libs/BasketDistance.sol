@@ -71,16 +71,38 @@ library BasketDistance {
     /// @notice The L1 distance, WAD, from the composition `values` describes to `targets`.
     /// @param values Each leg's value in one common unit; see the contract notes.
     /// @param targets Each leg's target weight, WAD, summing to exactly `ONE`.
-    /// @dev Checks, in order: at least one leg; equal leg counts; targets summing to `ONE`;
-    ///      a non-zero total; the total within `MAX_TOTAL_VALUE`. Then one pass over the legs
-    ///      and one division.
+    /// @dev `scaledDistance` and its one division.
     function distance(uint256[] memory values, uint256[] memory targets) internal pure returns (uint256) {
+        (uint256 scaled, uint256 total) = scaledDistance(values, targets);
+        return scaled / total;
+    }
+
+    /// @notice The distance BEFORE its one division: the numerator `scaled` and the
+    ///         denominator `total`, with `distance == scaled / total`.
+    /// @dev For the pricing core (T14). A fill valued at the oracle moves value from one leg to
+    ///      another and leaves `total` unchanged, so the distance before and after the fill
+    ///      share a denominator, and their DIFFERENCE is exact in the numerators alone:
+    ///      `scaledAfter - scaledBefore` is `total * (distanceAfter - distanceBefore)` with no
+    ///      floor anywhere. `distance` would floor each side once and hand the caller a
+    ///      difference off by up to a wei of WAD, which is a wei of `total` in value; the
+    ///      numerators hand it the exact quantity, and the exact-out inverse is exact only
+    ///      because of it.
+    ///
+    ///      Checks, in order: at least one leg; equal leg counts; targets summing to `ONE`;
+    ///      a non-zero total; the total within `MAX_TOTAL_VALUE`. Then one pass over the legs.
+    function scaledDistance(
+        uint256[] memory values,
+        uint256[] memory targets
+    )
+        internal
+        pure
+        returns (uint256 scaled, uint256 total)
+    {
         uint256 n = values.length;
         require(n > 0, BasketNeedsAtLeastOneLeg());
         require(targets.length == n, BasketLegCountMismatch(n, targets.length));
 
         uint256 targetSum;
-        uint256 total;
         for (uint256 l = 0; l < n; ++l) {
             targetSum += targets[l];
             total += values[l];
@@ -89,12 +111,10 @@ library BasketDistance {
         require(total > 0, BasketHasNoValue());
         require(total <= MAX_TOTAL_VALUE, BasketTotalValueTooLarge(total));
 
-        uint256 scaled;
         for (uint256 l = 0; l < n; ++l) {
             uint256 held = values[l] * ONE;
             uint256 wanted = targets[l] * total;
             scaled += held > wanted ? held - wanted : wanted - held;
         }
-        return scaled / total;
     }
 }
