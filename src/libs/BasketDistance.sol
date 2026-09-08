@@ -11,8 +11,10 @@ pragma solidity 0.8.30;
 ///
 ///         The pricing core (T14) computes this before and after a proposed fill and prices by
 ///         the delta: a fill that shrinks it is toward target and cheap, a fill that grows it is
-///         away from target and expensive. The per-fill cap (T15) bounds how much of it one
-///         fill may close.
+///         away from target and expensive. The per-fill cap (T15) is on the VALUE a fill moves,
+///         which bounds how much of this one fill may close: a moving leg's share changes by
+///         the value moved over the total, so a fill moving `c` of the basket changes the
+///         distance by at most `2c`.
 ///
 /// @dev THE VALUE UNIT. `values[l]` is leg `l`'s balance expressed in one unit common to every
 ///      leg. Which unit is the caller's choice and the library never learns it: only the

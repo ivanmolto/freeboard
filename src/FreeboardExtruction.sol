@@ -108,6 +108,20 @@ contract FreeboardExtruction is IExtruction, IStaticExtruction {
     ///      1e14 dollars; anything larger is refused by name rather than left to a panic.
     uint256 internal constant MAX_BASKET_VALUE = 1e40;
 
+    /// @dev The per-fill cap's unit: `maxShiftBps` is basis points of the BASKET'S VALUE that
+    ///      one fill may move — the larger of what comes in and what goes out, over the total
+    ///      before the fill. 500 is five percent of the basket per fill. Neither side of a fill
+    ///      exceeds the OUT LEG in value: exact-in, `_spreadNumerator` requires `x <= held`;
+    ///      exact-out, `_inValue` returns at most `held` (its pieces are clipped to the leg),
+    ///      and `ceilDiv` to a whole wei of the in token adds under one unit of it. So the
+    ///      share a fill can move is under `10,000 + unitIn * BPS / total` bps: on any basket
+    ///      that is not dust, a cap of 10,001 bps or more can never bind — it is no cap, and a
+    ///      borrower who ships one has signed away the bound (uint16 allows 65,535); the tests'
+    ///      20,000 never binds on a basket worth at least one wei of each of its tokens. On a
+    ///      dust basket worth less than a wei of the in token, that one wei is itself more
+    ///      than the basket, and the cap refuses it: right.
+    uint256 internal constant BPS = 10_000;
+
     /// @dev Aqua's docked marker (`Aqua.sol`, `_DOCKED = 0xff`); `tokensCount == 0` is inactive.
     uint8 internal constant AQUA_DOCKED = 0xff;
 
@@ -159,6 +173,43 @@ contract FreeboardExtruction is IExtruction, IStaticExtruction {
     /// @notice The fill would take more of `token` than the basket's leg holds.
     /// @param wanted The value the fill moves out of the leg; `held` is the leg's value.
     error FreeboardFillExceedsLeg(address token, uint256 wanted, uint256 held);
+
+    /// @notice The fill would move more of the basket's value than the cap the maker committed
+    ///         in the args (`FreeboardArgs.maxShiftBps`).
+    /// @param shift Basis points of the basket's value the fill moves, rounded up.
+    /// @param maxShift The cap, `maxShiftBps`.
+    /// @dev THE PROPERTY THAT BOUNDS EVERY FAILURE MODE THIS CONTRACT CANNOT EXCLUDE. A wrong
+    ///      health factor, a wrong oracle price, a curve the borrower mis-signed, a taker who
+    ///      has found something nobody thought of — whatever the cause, one fill moves at most
+    ///      this share of the basket, out of any leg, in any direction. It is also the on-chain
+    ///      answer to "the curve is public": closing `d` of basket distance takes moving at
+    ///      least `d / 2` of the basket's value (each moving leg's share changes by the value
+    ///      moved over the total), so a cap of `c` on value is a cap of `2c` on the distance
+    ///      one fill can close, and the whole rebalance cannot be taken in one fill at the
+    ///      deepest discount (`docs/freeboard-v0.md` §7).
+    ///
+    /// @dev TWO BOUNDS, SIDE BY SIDE. This one is on COMPOSITION, per fill. The bound on VALUE
+    ///      is the pricing rule's: no fill ever beats the oracle (`_spreadNumerator`, the
+    ///      no-underflow argument; `testFuzz_Pricing_NeverBeatsTheOracle_AndNeverExceedsTheAwaySpread`),
+    ///      so whoever moves the basket pays the borrower at least `SPREAD_TOWARD` for it, and
+    ///      there is no price below fair to drain at. What a wrong HF can still do is move the
+    ///      basket to the wrong composition at a fair price, and that is what this cap bounds —
+    ///      PER FILL, not per block. This function is `view` and keeps no count, so a sequence
+    ///      of `k` fills is bounded by `k` caps, each re-reading the health factor and the live
+    ///      basket and priced along the same path as one large fill (`_healthWeightedTarget`,
+    ///      convexity). A per-block budget would need storage written on the swap path, which
+    ///      gives up the structural quote/swap consistency above, and would ration the
+    ///      deleveraging the basket exists to do; `PerFillCap.t.sol` says what it would take.
+    ///
+    /// @dev WHY VALUE AND NOT DISTANCE. The first cut of this cap bounded the change in
+    ///      `BasketDistance` a fill causes. That metric is blind along a whole family of
+    ///      fills: one leg moving toward its target and the other away leaves the L1 distance
+    ///      unchanged however much value moves, so under it a taker could take two thirds of
+    ///      a leg in one fill against a 500 bps cap (review, Sep 8; `PerFillCap.t.sol`,
+    ///      `test_AMixedFill_MovesNoDistance_AndIsCappedAllTheSame`). Value moved has no blind
+    ///      direction, and it bounds the distance change from above — so it carries both
+    ///      claims, and it costs one comparison.
+    error FreeboardFillExceedsMaxShift(uint256 shift, uint256 maxShift);
 
     // -----------------------------------------------------------------------------------
     // The basket, as the pricing core sees it
@@ -296,7 +347,8 @@ contract FreeboardExtruction is IExtruction, IStaticExtruction {
     ///
     /// @dev ORDER OF READS. The health factor is read before this function is entered; the
     ///      curve is decoded and the targets derived before anything else is read; then the
-    ///      basket. Every read is a `view` over state fixed within the block.
+    ///      basket. Every read is a `view` over state fixed within the block. Last, on the
+    ///      amounts that will settle, the per-fill cap (`_requireWithinMaxShift`).
     function _healthWeightedTarget(
         SwapQuery calldata query,
         SwapRegisters memory swap,
@@ -314,13 +366,55 @@ contract FreeboardExtruction is IExtruction, IStaticExtruction {
         uint256[] memory targets = Curve.weightsAt(curve, healthFactor);
         Basket memory basket = _basket(query, swap, args, n, targets);
 
+        uint256 valueIn;
+        uint256 valueOut;
         if (query.isExactIn) {
-            uint256 x = swap.amountIn * basket.unitIn;
-            swap.amountOut = _outValue(basket, x) / basket.unitOut;
+            valueIn = swap.amountIn * basket.unitIn;
+            swap.amountOut = _outValue(basket, valueIn) / basket.unitOut;
+            valueOut = swap.amountOut * basket.unitOut;
         } else {
-            uint256 y = swap.amountOut * basket.unitOut;
-            swap.amountIn = Math.ceilDiv(_inValue(basket, y), basket.unitIn);
+            valueOut = swap.amountOut * basket.unitOut;
+            swap.amountIn = Math.ceilDiv(_inValue(basket, valueOut), basket.unitIn);
+            valueIn = swap.amountIn * basket.unitIn;
         }
+        _requireWithinMaxShift(basket, valueIn, valueOut, args.maxShiftBps());
+    }
+
+    // -----------------------------------------------------------------------------------
+    // 5. The per-fill cap
+    // -----------------------------------------------------------------------------------
+
+    /// @notice Refuses the fill if it would move more than `maxShiftBps` of the basket's value
+    ///         — the cap the maker signed into the args.
+    /// @param valueIn The value the taker pays in, `amountIn * unitIn`, as it will SETTLE.
+    /// @param valueOut The value the taker takes out, `amountOut * unitOut`, as it will SETTLE.
+    /// @dev THE LARGER SIDE, OVER THE BASKET BEFORE THE FILL. The two sides differ by the spread
+    ///      the maker keeps, so the in side is the larger; the larger is measured rather than
+    ///      assumed. The denominator is the basket as it stands, the same total every other
+    ///      number in this fill is taken against.
+    ///
+    /// @dev CHECKED AFTER PRICING, ON THE FINAL AMOUNTS. `_inValue` evaluates the spread at
+    ///      piece boundaries that are not the fill; only the amounts that reach the registers
+    ///      are the fill, so the cap is applied once, here, to exactly what settles — the same
+    ///      two numbers whatever the fill's direction or side.
+    ///
+    /// @dev EXACT. `ceilDiv(moved * BPS, total) <= cap` is `moved * BPS <= cap * total` with no
+    ///      rounding in the comparison, and the bps it names in the refusal is strictly above
+    ///      the cap whenever it refuses. `moved` is under the out leg plus one unit of the in
+    ///      token (see `BPS`), so the product is under `(MAX_BASKET_VALUE + unitIn) * BPS`,
+    ///      about 1e44.
+    function _requireWithinMaxShift(
+        Basket memory basket,
+        uint256 valueIn,
+        uint256 valueOut,
+        uint256 maxShiftBps
+    )
+        internal
+        pure
+    {
+        uint256 moved = valueIn > valueOut ? valueIn : valueOut;
+        uint256 shift = Math.ceilDiv(moved * BPS, basket.total);
+        require(shift <= maxShiftBps, FreeboardFillExceedsMaxShift(shift, maxShiftBps));
     }
 
     /// @dev Values every committed leg at the oracle. The swapped pair comes from the registers

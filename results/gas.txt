@@ -10,10 +10,10 @@
 # Every figure is COLD: measured after restoring a state snapshot taken before the first
 # touch (docs/NOTES-gas.md section 6); gasTotalUsed from the callee's perspective.
 #
-quote() through the deployed router                       264547
-swap() through the deployed router                        393639
-FreeboardExtruction.extruction(), router's exact inputs   242655
+quote() through the deployed router                       266670
+swap() through the deployed router                        395762
+FreeboardExtruction.extruction(), router's exact inputs   244778
 Aave Pool.getUserAccountData(maker), 2 reserves           117479
 #
-# The Aave read's share:  44.4% of quote()   29.8% of swap()   48.4% of the extruction
-# The extruction's share: 91.7% of quote()   61.6% of swap()
+# The Aave read's share:  44.0% of quote()   29.6% of swap()   47.9% of the extruction
+# The extruction's share: 91.7% of quote()   61.8% of swap()

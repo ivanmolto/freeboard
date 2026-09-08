@@ -78,7 +78,10 @@ contract PricingTest is Test {
     uint256 internal constant MIXED = 0.0055e18;
     uint256 internal constant AWAY = 0.01e18;
 
-    uint16 internal constant MAX_SHIFT_BPS = 500;
+    /// @dev The per-fill cap is OFF here: 20,000 bps is twice the basket, and no fill can move
+    ///      more than the basket. These tests fuzz fills up to the whole out leg to pin the
+    ///      PRICE; the cap that would refuse most of them is T15's subject, `PerFillCap.t.sol`.
+    uint16 internal constant MAX_SHIFT_BPS = 20_000;
 
     FreeboardExtruction internal freeboard;
     bytes internal args;
@@ -355,6 +358,25 @@ contract PricingTest is Test {
 
         // Exact-out lands on the same fill: asking for exactly that WETH costs exactly x.
         assertEq(_exactOut(USDC, WETH, out) * UNIT_USDC, x, "the inverse of the piecewise fill");
+    }
+
+    /// @notice The DoD fill once more, with the reference position's 500 bps cap LIVE in the
+    ///         args: $1,000 on a $100k basket is 100 bps of it, well inside, and lands on the
+    ///         same wei. The cap only ever reverts (T15); this pins that it changes nothing
+    ///         else on the path every other test here takes with the cap off.
+    function test_UnderALiveCap_TheSameFillPricesToTheSameWei() public {
+        _setHealthFactor(2.0e18);
+        _setBasket(_wei(WETH, 100_000, 0.6e18), _wei(WBTC, 100_000, 0.2e18), _wei(USDC, 100_000, 0.2e18));
+        uint256 amountIn = 1000 * USD / UNIT_WBTC;
+        uint256 capOff = _exactIn(WBTC, WETH, amountIn);
+
+        bytes memory off = args;
+        args = FreeboardArgs.encode(Curves.freeboard(), Curves.freeboardTokens(), 500);
+        uint256 capOn = _exactIn(WBTC, WETH, amountIn);
+        args = off;
+
+        assertEq(capOn, capOff, "a live 500 bps cap must not move the price of a fill inside it");
+        assertEq(capOn, 499_500_000_000_000_000, "the DoD literal, with the cap on");
     }
 
     // -----------------------------------------------------------------------------------

@@ -77,6 +77,9 @@ contract QuoteSwapConsistencyForkTest is Test {
     /// @dev The taker sells 1 WETH for USDC, exact-in.
     uint256 internal constant AMOUNT_IN = 1 ether;
 
+    /// @dev A LIVE cap, the reference position's 500 bps: 1 WETH into a basket worth 21 WETH
+    ///      is 477 bps of its value, so the compliance proof below runs the cap path on the
+    ///      deployed router with the cap on, and passes it (T15, `test/unit/PerFillCap.t.sol`).
     uint16 internal constant MAX_SHIFT_BPS = 500;
     uint256 internal constant ONE = 1e18;
 

@@ -84,7 +84,10 @@ contract HealthFactorForkTest is Test {
     uint256 internal constant AMOUNT_IN = 1 ether;
 
     /// @dev The per-fill cap committed in each maker's args. Distinct per maker, so the two
-    ///      programs differ in their bytes and not only in their `maker`.
+    ///      programs differ in their bytes and not only in their `maker`. Both LIVE at the
+    ///      reference position's 500 bps: 1 WETH into 10 WETH + 40,000 USDC is 385 bps of the
+    ///      basket at the pin's WETH price ($2,497.60), so every fill here runs the cap path
+    ///      with the cap on (T15, `test/unit/PerFillCap.t.sol`).
     uint16 internal constant MAX_SHIFT_TOP = 500;
     uint16 internal constant MAX_SHIFT_MID = 501;
 
