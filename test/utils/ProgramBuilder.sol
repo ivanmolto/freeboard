@@ -4,6 +4,9 @@ pragma solidity 0.8.30;
 import { ISwapVM } from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import { MakerTraitsLib } from "@1inch/swap-vm/src/libs/MakerTraits.sol";
 
+import { FreeboardArgs } from "../../src/libs/FreeboardArgs.sol";
+import { ProgramLib } from "./ProgramLib.sol";
+
 /// @title ProgramBuilder
 /// @notice Builds an Aqua-path position — the `ship()` calldata and the executed order — from
 ///         ONE set of bytes, so the two cannot drift apart.
@@ -49,10 +52,14 @@ library ProgramBuilder {
     /// @param strategy `abi.encode(order)` — the `strategy` argument to `Aqua.ship`.
     /// @param strategyHash `keccak256(strategy)`, which is what `ship()` returns and what
     ///        `SwapVM.hash(order)` must equal.
+    /// @param extructionArgs For a Freeboard position, the `FreeboardArgs` bytes the program's
+    ///        one `_extruction` carries after its 20-byte target — what the extruction receives
+    ///        as `args`. Empty for a position built from raw program bytes.
     struct Position {
         ISwapVM.Order order;
         bytes strategy;
         bytes32 strategyHash;
+        bytes extructionArgs;
     }
 
     /// @notice Build an Aqua-path position around a program.
@@ -80,5 +87,28 @@ library ProgramBuilder {
         position.order = MakerTraitsLib.build(args);
         position.strategy = abi.encode(position.order);
         position.strategyHash = keccak256(position.strategy);
+    }
+
+    /// @notice Build THE Freeboard position: one `_extruction` to `extruction`, last and alone
+    ///         in the program, carrying `FreeboardArgs.encode(curve, tokens, maxShiftBps)`.
+    /// @dev The same `FreeboardArgs` the extruction parses encodes here, so the bytes `ship()`
+    ///      commits and the bytes the extruction reads are one definition apart from nothing.
+    ///      `tokens` must be, as a set, the tokens `ship()` is called with: the extruction reads
+    ///      the non-swapped legs from Aqua under this strategy hash and refuses a leg Aqua does
+    ///      not hold.
+    function freeboardPosition(
+        address maker,
+        address extruction,
+        bytes memory curve,
+        address[] memory tokens,
+        uint16 maxShiftBps
+    )
+        internal
+        pure
+        returns (Position memory position)
+    {
+        bytes memory extructionArgs = FreeboardArgs.encode(curve, tokens, maxShiftBps);
+        position = aquaPosition(maker, ProgramLib.extruction(extruction, extructionArgs));
+        position.extructionArgs = extructionArgs;
     }
 }
