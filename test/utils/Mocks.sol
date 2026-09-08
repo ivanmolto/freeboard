@@ -32,6 +32,28 @@ contract MockAaveV3Pool {
     }
 }
 
+/// @dev A pool that CANNOT compute a health factor: `getUserAccountData` reverts, for every
+///      account, with whatever data was set — empty by default. Empty is the shape T8 found on
+///      mainnet (`test/fork/AaveHF.t.sol`, "The revert taxonomy" (a)/(b)): a zero price makes
+///      `AaveOracle` fall through to its fallback oracle, which is `address(0)`, and the decode
+///      of empty returndata reverts with no data at all. A reasoned revert is shape (c), a
+///      price source that itself reverts and bubbles its reason through the oracle and the pool.
+///      Etched over `MockAaveV3Pool` at the pool's address for T16 (`test/unit/FailSafe.t.sol`).
+contract MockUnreadableAaveV3Pool {
+    bytes private _revertData;
+
+    function setRevertData(bytes calldata revertData) external {
+        _revertData = revertData;
+    }
+
+    function getUserAccountData(address) external view returns (uint256, uint256, uint256, uint256, uint256, uint256) {
+        bytes memory revertData = _revertData;
+        assembly ("memory-safe") {
+            revert(add(revertData, 32), mload(revertData))
+        }
+    }
+}
+
 /// @dev `getPriceOracle()`: names the oracle, as the real provider does for the real Pool.
 contract MockPoolAddressesProvider {
     function getPriceOracle() external pure returns (address) {
