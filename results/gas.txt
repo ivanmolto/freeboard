@@ -1,0 +1,19 @@
+# results/gas.txt - T14
+# Emitted by test/fork/Pricing.t.sol (PricingForkTest.test_Gas_OneFillThroughTheDeployedRouter).
+# Never edited by hand. Ethereum mainnet fork, FORK_BLOCK=25900000.
+#
+# One fill through the DEPLOYED AquaSwapVMRouter (0x111111338c5091E8440b67B168bAe16a668AC0De)
+# with the Freeboard program: one _extruction (0x20) to FreeboardExtruction, 212 bytes of
+# args (4-breakpoint curve, 3 tokens, maxShiftBps). Basket WETH / WBTC / USDC, maker at Aave
+# health factor 1.60 (WETH collateral, USDC variable debt: a 2-reserve read), taker sells
+# 1 WETH for USDC exact-in. The fill crosses USDC's target, so both pricing pieces run.
+# Every figure is COLD: measured after restoring a state snapshot taken before the first
+# touch (docs/NOTES-gas.md section 6); gasTotalUsed from the callee's perspective.
+#
+quote() through the deployed router                       264547
+swap() through the deployed router                        393639
+FreeboardExtruction.extruction(), router's exact inputs   242655
+Aave Pool.getUserAccountData(maker), 2 reserves           117479
+#
+# The Aave read's share:  44.4% of quote()   29.8% of swap()   48.4% of the extruction
+# The extruction's share: 91.7% of quote()   61.6% of swap()

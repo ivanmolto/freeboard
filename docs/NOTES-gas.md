@@ -85,3 +85,31 @@ all 67 reserves — **2,282,135 gas** for an empty user.
 
 Decision: STATICCALL the Pool directly. `test_Gas_ColdReadFitsAnExtructionBudget`
 asserts the cold read stays under 200,000.
+
+## 6. `vm.snapshotState` / `vm.revertToState` DOES restore cold state (T14)
+
+`vm.cool` does not (§1), but reverting to a state snapshot does. Probed on
+the fork (forge 1.5.1), `Pool.getUserAccountData` on an empty user:
+
+| step | gas |
+|---|---|
+| first statement of the test body | 25,362 |
+| repeated | 5,362 |
+| after `vm.revertToState` to a snapshot taken as the first statement | 25,360 |
+
+The revert restores the journaled state the fork backend keeps, and the
+warm-address and warm-slot marks live in it. So one test can take a snapshot
+as its first statement and produce several independent COLD measurements by
+reverting between them — which is how `test/fork/Pricing.t.sol` emits every
+figure in `results/gas.txt` from a single test function, instead of §2's
+one-test-per-measurement.
+
+## 7. One fill through the deployed router (T14)
+
+`results/gas.txt` is emitted by `PricingForkTest.test_Gas_OneFillThroughTheDeployedRouter`:
+the Freeboard program on the deployed `AquaSwapVMRouter`, three-leg basket, maker
+at HF 1.60 with a 2-reserve Aave position, taker sells 1 WETH for USDC. Read the
+file for the numbers; they are not retyped here. The Aave read is the 2-reserve
+cold figure from §4 exactly (117,479), which is the check that the snapshot
+method above measures the same thing §2's method did.
+
