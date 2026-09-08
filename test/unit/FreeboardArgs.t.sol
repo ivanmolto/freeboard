@@ -143,6 +143,25 @@ contract FreeboardArgsTest is Test {
         h.curve(hex"0403");
     }
 
+    /// @notice A zero cap is a basket no fill can ever move within, so no taker can ever
+    ///         fill: refused on the way in and on the way out, and one bps is the floor.
+    function test_RevertWhen_TheCapIsZero() public {
+        vm.expectRevert(FreeboardArgs.FreeboardArgsZeroCap.selector);
+        this.encodeExternal(curve, tokens, 0);
+
+        // The decoder refuses the same blob: the cap is the last two bytes.
+        bytes memory zeroCap = args;
+        zeroCap[190] = 0;
+        zeroCap[191] = 0;
+        vm.expectRevert(FreeboardArgs.FreeboardArgsZeroCap.selector);
+        h.validate(zeroCap);
+
+        // `maxShiftBps` still reads it — the refusal is `validate`'s, by name, not a decode
+        // failure — and one bps validates.
+        assertEq(h.maxShiftBps(zeroCap), 0, "the field decodes; validate refuses it");
+        h.validate(FreeboardArgs.encode(curve, tokens, 1));
+    }
+
     function test_RevertWhen_TheCurveInsideIsInvalid() public {
         bytes memory bad = args;
         // Row 1's USDC weight lives at offset 2 + 32 + 8 + 16; bump its low byte by one.

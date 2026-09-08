@@ -20,11 +20,26 @@ import { Curve } from "./Curve.sol";
 ///        offset curveSize + 20 * l      address    token of leg l, for l in [0, n), in the
 ///                                                    curve's leg order — leg l's weight is the
 ///                                                    target for THIS token
-///        offset curveSize + 20 * n      uint16     maxShiftBps — the largest change in basket
-///                                                    distance one fill may cause, in basis
-///                                                    points of WAD distance (T15 enforces it)
+///        offset curveSize + 20 * n      uint16     maxShiftBps — the largest share of the
+///                                                    basket's value one fill may move, in
+///                                                    basis points (T15 enforces it); non-zero,
+///                                                    see below
 ///
 ///        size = curveSize + 20 * n + 2
+///
+/// @dev A ZERO CAP IS REFUSED. `FreeboardExtruction` lets a fill through only if the value it
+///      moves, rounded up to a basis point of the basket, is at most the cap; under a zero cap
+///      only a fill of zero value passes, and the router accepts no such fill. A zero cap is
+///      therefore a basket no taker can ever fill, and it has the shape of the allowance trap
+///      (CLAUDE.md): shipped, every leg reported, HF readable, and silently unfillable.
+///      Refusing it here, where the bytes are built and where the Ledger flow validates what
+///      the borrower is about to sign, is what stops it from being signed. No ceiling: neither
+///      side of a fill exceeds the out leg (plus a wei of the in token from rounding), so on
+///      any basket that is not dust a cap of 10,001 bps or more never binds — the Ledger flow
+///      should show such a cap as "no per-fill cap" — and a structural ceiling would refuse
+///      nothing a reader cannot see for themselves;
+///      a tighter one is a risk policy, which is the borrower's to sign, not this library's to
+///      refuse.
 ///
 ///      The Freeboard position — 4 breakpoints over WETH / WBTC / USDC — is 130 + 60 + 2 = 192
 ///      bytes (`FREEBOARD_ARGS_SIZE`); with the 20-byte target that is 212 of the 255 bytes one
@@ -47,6 +62,7 @@ library FreeboardArgs {
     error FreeboardArgsTokenCountMismatch(uint256 tokens, uint256 legs);
     error FreeboardArgsZeroToken(uint256 leg);
     error FreeboardArgsDuplicateToken(address token);
+    error FreeboardArgsZeroCap();
 
     // -----------------------------------------------------------------------------------
     // Shape
@@ -85,7 +101,7 @@ library FreeboardArgs {
         }
     }
 
-    /// @notice The per-fill cap, in basis points of WAD basket distance.
+    /// @notice The per-fill cap, in basis points of the basket's value.
     function maxShiftBps(bytes calldata args) internal pure returns (uint256) {
         uint256 offset = _curveSize(args) + ADDRESS_SIZE * legs(args);
         require(args.length >= offset + CAP_SIZE, FreeboardArgsLengthMismatch(args.length, offset + CAP_SIZE));
@@ -97,8 +113,8 @@ library FreeboardArgs {
     // -----------------------------------------------------------------------------------
 
     /// @notice Rejects every args blob the extruction cannot price: a curve `Curve.validate`
-    ///         rejects, a length that is not exactly `size(m, n)`, a zero token, or a token
-    ///         listed twice.
+    ///         rejects, a length that is not exactly `size(m, n)`, a zero token, a token
+    ///         listed twice — and the one blob it could price but never fill, a zero cap.
     /// @dev Where the bytes are built and decoded — once, not on every fill (`Curve.validate`).
     function validate(bytes calldata args) internal pure {
         bytes calldata c = curve(args);
@@ -115,6 +131,7 @@ library FreeboardArgs {
                 require(tokenAt(args, k) != token, FreeboardArgsDuplicateToken(token));
             }
         }
+        require(maxShiftBps(args) != 0, FreeboardArgsZeroCap());
     }
 
     // -----------------------------------------------------------------------------------
@@ -124,7 +141,7 @@ library FreeboardArgs {
     /// @notice Packs a curve, its token list and the cap into the layout above.
     /// @param curveBytes A curve as `Curve.encode` produced it (so already validated).
     /// @param tokenList One token per curve leg, in leg order; non-zero and distinct.
-    /// @param cap `maxShiftBps`.
+    /// @param cap `maxShiftBps`, non-zero.
     /// @dev Enforces the same rules as `validate` on the way in, so an encoded blob always
     ///      decodes; the two are checked against each other in the tests.
     function encode(
@@ -143,6 +160,7 @@ library FreeboardArgs {
         uint256 n = uint8(curveBytes[1]);
         require(curveBytes.length == Curve.size(m, n), FreeboardArgsLengthMismatch(curveBytes.length, Curve.size(m, n)));
         require(tokenList.length == n, FreeboardArgsTokenCountMismatch(tokenList.length, n));
+        require(cap != 0, FreeboardArgsZeroCap());
 
         out = curveBytes;
         for (uint256 l = 0; l < n; ++l) {
