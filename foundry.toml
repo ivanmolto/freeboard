@@ -5,6 +5,8 @@ optimizer_runs = 700
 via_ir         = true
 fs_permissions = [
     { access = "read-write", path = "./results" },
+    # script/StageWorld.s.sol writes agent/world.json — the keeper agent's only view of the world.
+    { access = "read-write", path = "./agent" },
     # Read-only, for test_Repo_ContainsZeroModifiedSwapVMSource (T9): walk the tracked
     # Solidity, and pin the swap-vm files this repo compiles against to the v1.0.2 tag.
     { access = "read", path = "./src" },
