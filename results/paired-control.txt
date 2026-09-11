@@ -1,0 +1,110 @@
+Freeboard paired control (T27)
+==============================
+
+Same wallet, same Aave position, same oracle path, same taker, same fill budget,
+same three tokens for the same $80,000, shipped through the DEPLOYED Aqua and
+AquaSwapVMRouter, each arm at the composition its own instruction calls fair.
+One instruction of difference in the shipped program:
+
+  Unguarded : 0x1100
+              [0x11 _xycSwapXD] - swap-vm's stock constant-product swap. Prices each
+              pair by the ratio of its balances. No oracle, no health factor, no cap.
+  Freeboard : [0x20 _extruction -> FreeboardExtruction][curve . maxShiftBps]
+              HF -> target weights, priced by basket distance, 500 bps cap per fill.
+              (214 bytes; the same bytes as results/price-path.txt)
+
+strategy hash, unguarded : 0xa0f5b047138d7f04da56b4c69bd9341a224db84e0743ec892cfe99653cf937cd
+strategy hash, freeboard : 0xf24c618930f7016aa533d005062ef1147d52aae3d50cbae005b9e985be7b267e
+transcript, unguarded    : 0x5594c4679e3ba00d5f897a6e2f1c5213abe0b09be3332bc4bad8ddc094a260b5
+transcript, freeboard    : 0x8266d26e0634ddd216a6d2a84556714303e1466b7a268d71a32a934bb6d48489
+Aave collateral          : 100.0000 WETH / 3.000000 WBTC
+USDC debt                : 198332.28 USDC
+shipped, unguarded       : 10.6769 WETH / 0.329612 WBTC / 26670.07 USDC   (equal thirds by value: the only ratio a constant product prices at the oracle)
+shipped, freeboard       : 16.0154 WETH / 0.296651 WBTC / 16002.04 USDC   (the curve's top row, 50 / 30 / 20 by value)
+oracle path              : HF 2.00 -> 1.80 -> 1.60 -> 1.45 -> 1.30 -> 1.20 -> 1.15 -> 1.10
+
+|                                                        | Unguarded        | Freeboard        |
+|--------------------------------------------------------|------------------|------------------|
+| Final health factor                                    | 1.10             | 1.10             |
+| Lowest health factor on the path                       | 1.10             | 1.10             |
+| Liquidated                                             | no               | no               |
+| Liquidation penalty paid                               | $0.00            | $0.00            |
+| Spread earned on the way down                          | -$395.83         | +$24.47          |
+| Collateral remaining in Aave: WETH                     | 100.0000 WETH    | 100.0000 WETH    |
+| Collateral remaining in Aave: WBTC                     | 3.000000 WBTC    | 3.000000 WBTC    |
+|--------------------------------------------------------|------------------|------------------|
+| Fills                                                  | 28               | 15               |
+| Realized price vs oracle, over all fills               | -351.4 bps       | +10.0 bps        |
+| Basket value at the top                                | $80000.00        | $80000.00        |
+| Basket value at the bottom                             | $53703.02        | $56328.11        |
+|   vs holding the shipped basket untouched              | -$2296.97        | +$5128.11        |
+| Basket at the bottom: WETH                             | 13.0205 WETH     | 8.2010 WETH      |
+| Basket at the bottom: WBTC                             | 0.402973 WBTC    | 0.126589 WBTC    |
+| Basket at the bottom: USDC (the debt asset)            | 17888.30 USDC    | 39434.84 USDC    |
+|--------------------------------------------------------|------------------|------------------|
+| She repays her USDC debt with the basket's USDC        | 17888.30 USDC    | 39434.84 USDC    |
+|   share of the debt repaid                             | 9.02%            | 19.88%           |
+|   health factor after                                  | 1.21             | 1.37             |
+
+Notes
+-----
+The first two rows are the same number twice, and they have to be: the basket is the
+borrower's wallet, not her Aave collateral. No fill in either arm touches her aTokens
+or her debt, so Aave's health factor cannot move, and on a path that stops at HF 1.10
+neither arm is liquidated. What the instruction changes is what she is HOLDING when
+she gets to the bottom, and what she was paid or charged on the way. The last three
+rows are her own action, taken identically in both arms: repay the USDC debt with the
+USDC her basket holds. Freeboard never repays; it puts the USDC in her hand.
+
+Spread: for the Freeboard arm this is what takers paid her above the Aave oracle,
+ten basis points a fill. For the unguarded arm it is what takers took from her below
+the oracle: a constant-product basket keeps its price until an arbitrageur moves it,
+so on a falling oracle it buys the falling asset above market at every rung.
+
+Hold: each arm's own shipped basket, untouched, at the bottom's prices. Both arms
+start at the oracle for their instruction, so neither is charged for its seeding:
+at HF 2.00 the Freeboard basket is at the top row and no taker has anything to take,
+and the unguarded basket's pairs are at the oracle until the first warp moves it.
+
+Emitted by `forge script script/PairedControl.s.sol --tc PairedControl` on a mainnet
+fork at FORK_BLOCK; asserted by test/fork/PairedControl.t.sol. The Freeboard arm's
+rung-by-rung record is results/price-path.txt. The unguarded arm's follows.
+
+The unguarded arm, rung by rung
+-------------------------------
+HF 2.00  basket 33.33 / 33.33 / 33.33
+HF 1.80  basket 33.26 / 33.48 / 33.26
+    0.017830 WBTC -> 1368.62 USDC   taker kept +$70.22
+    0.2850 WETH -> 657.74 USDC   taker kept +$17.10
+    326.71 USDC -> 0.004546 WBTC   taker kept +$4.33
+    0.0724 WETH -> 163.89 USDC   taker kept +$1.08
+HF 1.60  basket 33.26 / 33.48 / 33.26
+    0.6693 WETH -> 1418.71 USDC   taker kept +$81.13
+    0.009086 WBTC -> 0.3021 WETH   taker kept +$15.58
+    0.004633 WBTC -> 303.84 USDC   taker kept +$3.95
+    0.0748 WETH -> 150.44 USDC   taker kept +$0.98
+HF 1.45  basket 33.27 / 33.45 / 33.27
+    0.5790 WETH -> 1101.46 USDC   taker kept +$52.89
+    0.007692 WBTC -> 0.2545 WETH   taker kept +$9.73
+    0.003908 WBTC -> 231.72 USDC   taker kept +$2.46
+    0.0631 WETH -> 114.94 USDC   taker kept +$0.61
+HF 1.30  basket 33.26 / 33.47 / 33.26
+    0.6658 WETH -> 1141.65 USDC   taker kept +$60.65
+    0.009183 WBTC -> 0.3049 WETH   taker kept +$12.04
+    0.004677 WBTC -> 249.02 USDC   taker kept +$3.05
+    0.0755 WETH -> 123.36 USDC   taker kept +$0.76
+HF 1.20  basket 33.29 / 33.43 / 33.29
+    0.5023 WETH -> 783.50 USDC   taker kept +$30.73
+    0.006524 WBTC -> 0.2149 WETH   taker kept +$5.41
+    0.003304 WBTC -> 161.76 USDC   taker kept +$1.36
+    0.0534 WETH -> 80.37 USDC   taker kept +$0.34
+HF 1.15  basket 33.31 / 33.38 / 33.31
+    0.2719 WETH -> 398.90 USDC   taker kept +$8.40
+    0.003355 WBTC -> 0.1096 WETH   taker kept +$1.34
+    0.001688 WBTC -> 78.87 USDC   taker kept +$0.34
+    0.0273 WETH -> 39.31 USDC   taker kept +$0.08
+HF 1.10  basket 33.31 / 33.39 / 33.31
+    0.2884 WETH -> 405.08 USDC   taker kept +$8.90
+    0.004008 WBTC -> 0.1312 WETH   taker kept +$1.80
+    0.002019 WBTC -> 90.32 USDC   taker kept +$0.45
+    0.0327 WETH -> 44.99 USDC   taker kept +$0.11

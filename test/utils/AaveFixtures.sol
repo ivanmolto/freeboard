@@ -47,6 +47,11 @@ interface IAaveV3PoolFixture is IAaveV3Pool {
         external;
 
     function setUserUseReserveAsCollateral(address asset, bool useAsCollateral) external;
+
+    /// @dev `IPool.sol:279-284`. The paired control's epilogue (T27) is the only caller: the
+    ///      BORROWER repays with the USDC her basket holds, in both arms. Nothing of Freeboard's
+    ///      calls it — see CLAUDE.md, "WHAT FREEBOARD NEVER DOES".
+    function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf) external returns (uint256);
 }
 
 /// @notice `AaveProtocolDataProvider`, reached through `IPoolAddressesProvider.getPoolDataProvider()`.
