@@ -85,10 +85,17 @@ contract PricePathForkTest is Test, PricePathEngine {
     ///      address (`deployExtruction`), so the strategy hash is not a function of who walked.
     function test_PricePath_MatchesTheCommittedArtifact() public {
         createFork();
+        Run memory run = walk();
         assertEq(
-            report(walk()),
+            report(run),
             vm.readFile("results/price-path.txt"),
             "results/price-path.txt is stale: regenerate with `forge script script/PricePath.s.sol --tc PricePath`"
+        );
+        // The JSON twin is what the UI replays (T29); it goes stale the same way.
+        assertEq(
+            json(run),
+            vm.readFile("results/price-path.json"),
+            "results/price-path.json is stale: regenerate with `forge script script/PricePath.s.sol --tc PricePath`"
         );
     }
 

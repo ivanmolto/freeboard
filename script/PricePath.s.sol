@@ -58,6 +58,10 @@ import { ProgramBuilder } from "../test/utils/ProgramBuilder.sol";
 ///      the whole run as memory, and `keccak256(abi.encode(run))` is the transcript the DoD
 ///      compares.
 ///
+/// @dev THREE PRIMITIVES, FOR THE LIVE DRIVER (T29): see `_as`, `_deal`, `_warpTo` below — the
+///      only places the walk writes to the chain, overridden by `script/LivePricePath.s.sol` to
+///      walk the same path as transactions on anvil for the UI.
+///
 /// @dev TWO HOOKS, FOR THE PAIRED CONTROL (T27). Arm A is the same wallet, the same Aave
 ///      position, the same oracle path and the same taker, shipping a STOCK basket program
 ///      instead of the Freeboard one. The two things an arm replaces are `virtual`:
@@ -71,6 +75,35 @@ import { ProgramBuilder } from "../test/utils/ProgramBuilder.sol";
 ///      Everything else — the rungs, `_warpTo`, `_fill`, the recording — is shared, so the two
 ///      arms differ by exactly what the control is meant to isolate.
 abstract contract PricePathEngine is CommonBase, StdCheats {
+    // -----------------------------------------------------------------------------------
+    // How the walk touches the chain — three primitives, for the live driver (T29)
+    // -----------------------------------------------------------------------------------
+
+    /// @dev Every write the walk makes goes through these three, so that ONE engine walks both
+    ///      a forked EVM under cheatcodes (the tests, `PricePath`) and a running anvil node under
+    ///      transactions (`script/LivePricePath.s.sol`, the UI's driver). The rungs, the taker
+    ///      rule, the fill and the recording are shared; what differs is only how "Alice does X"
+    ///      reaches the chain. `quote` is the one call that stays a prank in both: it is a read,
+    ///      and a prank outside a broadcast is plain simulation.
+    ///
+    ///        `_as(who)` / `_done()`  act as `who` until `_done()`: prank here, broadcast live.
+    ///        `_deal(token, who, x)`  give `who` exactly `x` of `token`: the cheatcode here; live,
+    ///                                the shell dealt over RPC beforehand and this only checks.
+    ///        `_warpTo(hf)`           move both collateral prices so Alice lands on `hf`:
+    ///                                `OracleWarp` here, the same feed migration as transactions
+    ///                                live. The arithmetic is the same on both sides.
+    function _as(address who) internal virtual {
+        vm.startPrank(who);
+    }
+
+    function _done() internal virtual {
+        vm.stopPrank();
+    }
+
+    function _deal(address token, address who, uint256 amount) internal virtual {
+        deal(token, who, amount);
+    }
+
     // -----------------------------------------------------------------------------------
     // The world, fixed
     // -----------------------------------------------------------------------------------
@@ -270,10 +303,22 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
     ///      — and `results/price-path.txt` could not be checked against the test that reproduces
     ///      it. With it, they agree.
     function deployExtruction() internal {
-        vm.prank(makeAddr("freeboard-deployer"));
+        _as(deployer());
         freeboard = new FreeboardExtruction();
+        _done();
         vm.makePersistent(address(freeboard));
         vm.label(address(freeboard), "FreeboardExtruction");
+    }
+
+    /// @dev The fixed EOA above. Its nonce-0 creation is the extruction; its nonce-1 creation,
+    ///      made only by the live driver, is the `FreeboardLens` the UI reads through — so the
+    ///      lens address is known to the run's JSON before anything is deployed.
+    function deployer() internal returns (address) {
+        return makeAddr("freeboard-deployer");
+    }
+
+    function lensAddress() internal returns (address) {
+        return vm.computeCreateAddress(deployer(), 1);
     }
 
     /// @notice Alice's Aave position, her shipped basket, the taker's float — the state every
@@ -314,14 +359,14 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
 
     /// @dev The taker holds and approves all three legs, so any direction can settle.
     function _fundTaker() internal {
-        deal(WETH, taker, TAKER_WETH);
-        deal(WBTC, taker, TAKER_WBTC);
-        deal(USDC, taker, TAKER_USDC);
-        vm.startPrank(taker);
+        _deal(WETH, taker, TAKER_WETH);
+        _deal(WBTC, taker, TAKER_WBTC);
+        _deal(USDC, taker, TAKER_USDC);
+        _as(taker);
         IERC20(WETH).approve(ROUTER, type(uint256).max);
         IERC20(WBTC).approve(ROUTER, type(uint256).max);
         IERC20(USDC).approve(ROUTER, type(uint256).max);
-        vm.stopPrank();
+        _done();
     }
 
     /// @notice The walk: build the world, then take every rung in order.
@@ -408,7 +453,7 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
     ///      health factor by exactly that — to the rounding of Aave's own 1e8 grid. The factor is
     ///      computed from the health factor the POOL reports, not from a running product, so each
     ///      rung is landed on rather than drifted toward.
-    function _warpTo(uint256 targetHf) private {
+    function _warpTo(uint256 targetHf) internal virtual {
         uint256 hf = healthFactorOf(alice);
         address[] memory collateral = new address[](2);
         collateral[0] = WETH;
@@ -531,11 +576,11 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
 
     /// @dev `supply` auto-enables collateral on a first deposit into a reserve with LTV > 0.
     function _supply(address who, address asset, uint256 amount) private {
-        deal(asset, who, amount);
-        vm.startPrank(who);
+        _deal(asset, who, amount);
+        _as(who);
         IERC20(asset).approve(Addresses.AAVE_V3_POOL, amount);
         POOL.supply(asset, amount, who, 0);
-        vm.stopPrank();
+        _done();
     }
 
     /// @dev Inverts `GenericLogic` the way T8 does: `debtBase = SUM(collateral_i * lt_i) / HF`,
@@ -548,8 +593,9 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         uint256 debtBase = (weighted * 1e14) / targetHf;
         amount = (debtBase * 1e6) / oracle.getAssetPrice(USDC);
 
-        vm.prank(who);
+        _as(who);
         POOL.borrow(USDC, amount, VARIABLE_RATE, 0, who);
+        _done();
     }
 
     /// @notice What she ships: `SHIPPED_VALUE` split by the curve's TOP ROW at the prices of the
@@ -577,15 +623,15 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         uint256[] memory amounts = shippedAmounts();
         require(amounts[2] <= borrowed, "the USDC leg is larger than the borrow");
 
-        deal(WETH, alice, amounts[0]);
-        deal(WBTC, alice, amounts[1]);
+        _deal(WETH, alice, amounts[0]);
+        _deal(WBTC, alice, amounts[1]);
 
-        vm.startPrank(alice);
+        _as(alice);
         bytes32 shippedHash = IAqua(AQUA).ship(ROUTER, position.strategy, tokens, amounts);
         for (uint256 l = 0; l < LEGS; ++l) {
             IERC20(tokens[l]).approve(AQUA, type(uint256).max);
         }
-        vm.stopPrank();
+        _done();
 
         require(shippedHash == position.strategyHash, "ship() did not return keccak256(strategy)");
         require(ISwapVM(ROUTER).hash(position.order) == position.strategyHash, "router hash != strategy hash");
@@ -606,8 +652,9 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
     }
 
     function swap(address tokenIn, address tokenOut, uint256 amountIn) internal returns (uint256 amountOut) {
-        vm.prank(taker);
+        _as(taker);
         (, amountOut,) = ISwapVM(ROUTER).swap(position.order, tokenIn, tokenOut, amountIn, _takerTraitsAndData());
+        _done();
     }
 
     // -----------------------------------------------------------------------------------
@@ -835,6 +882,124 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         );
     }
 
+    /// @notice The run as JSON — what the UI (T29) replays, and the addresses it reads live.
+    /// @dev Every uint256 is a decimal STRING: JavaScript numbers lose integers above 2^53, and
+    ///      a wei count of WETH is past that. Hand-assembled rather than `vm.serializeJson`, which
+    ///      cannot express an array of structs of arrays without a key per element. `lens` is
+    ///      where the live driver deploys the `FreeboardLens` (`lensAddress`), pinned here so the
+    ///      page needs nothing but this file in either mode. `block` is the block the run was
+    ///      recorded at — the pinned fork block under the tests, where the page's live mode
+    ///      starts scanning for fills.
+    function json(Run memory run) internal returns (string memory out) {
+        address[] memory tokens = Curves.freeboardTokens();
+        out = string.concat(
+            "{\n",
+            _kv("strategyHash", _q(vm.toString(run.strategyHash))),
+            _kv("maker", _q(vm.toString(alice))),
+            _kv("taker", _q(vm.toString(taker))),
+            _kv("extruction", _q(vm.toString(address(freeboard)))),
+            _kv("lens", _q(vm.toString(lensAddress())))
+        );
+        out = string.concat(
+            out,
+            _kv("router", _q(vm.toString(ROUTER))),
+            _kv("aqua", _q(vm.toString(AQUA))),
+            _kv("pool", _q(vm.toString(Addresses.AAVE_V3_POOL))),
+            _kv("tokens", _addrs(tokens)),
+            _kv("symbols", "[\"WETH\", \"WBTC\", \"USDC\"]"),
+            _kv("decimals", "[18, 8, 6]")
+        );
+        out = string.concat(
+            out,
+            _kv("curve", _q(vm.toString(Curves.freeboard()))),
+            _kv("maxShiftBps", vm.toString(MAX_SHIFT_BPS)),
+            _kv("borrowed", _q(vm.toString(run.borrowed))),
+            _kv("shipped", _arr(run.shipped)),
+            _kv("fills", vm.toString(run.fills)),
+            _kv("spreadValue", _q(vm.toString(run.spreadValue)))
+        );
+        out = string.concat(
+            out,
+            _kv("startHealthFactor", _q(vm.toString(run.startHealthFactor))),
+            _kv("finalHealthFactor", _q(vm.toString(run.finalHealthFactor))),
+            _kv("finalBalances", _arr(run.finalBalances)),
+            _kv("block", vm.toString(block.number)),
+            "\"steps\": ["
+        );
+        for (uint256 i = 0; i < run.steps.length; ++i) {
+            out = string.concat(out, i == 0 ? "\n" : ",\n", _stepJson(run.steps[i]));
+        }
+        out = string.concat(out, "\n]}\n");
+    }
+
+    function _stepJson(Step memory step) private returns (string memory out) {
+        out = string.concat(
+            "{",
+            _kv("targetHf", _q(vm.toString(step.targetHf))),
+            _kv("healthFactor", _q(vm.toString(step.healthFactor))),
+            _kv("prices", _arr(step.prices)),
+            _kv("targets", _arr(step.targets)),
+            _kv("balancesBefore", _arr(step.balancesBefore))
+        );
+        out = string.concat(
+            out,
+            _kv("balancesAfter", _arr(step.balancesAfter)),
+            _kv("sharesAfter", _arr(step.sharesAfter)),
+            _kv("totalBefore", _q(vm.toString(step.totalBefore))),
+            _kv("distanceBefore", _q(vm.toString(step.distanceBefore))),
+            _kv("distanceAfter", _q(vm.toString(step.distanceAfter))),
+            "\"fills\": ["
+        );
+        for (uint256 k = 0; k < step.fills.length; ++k) {
+            out = string.concat(out, k == 0 ? "" : ", ", _fillJson(step.fills[k]));
+        }
+        out = string.concat(out, "]}");
+    }
+
+    function _fillJson(Fill memory f) private pure returns (string memory out) {
+        out = string.concat(
+            "{",
+            _kv("legIn", vm.toString(f.legIn)),
+            _kv("legOut", vm.toString(f.legOut)),
+            _kv("amountIn", _q(vm.toString(f.amountIn))),
+            _kv("amountOut", _q(vm.toString(f.amountOut))),
+            _kv("quotedOut", _q(vm.toString(f.quotedOut)))
+        );
+        out = string.concat(
+            out,
+            _kv("fairOut", _q(vm.toString(f.fairOut))),
+            _kv("valueIn", _q(vm.toString(f.valueIn))),
+            _kv("spreadValue", _q(vm.toString(f.spreadValue))),
+            "\"shiftBps\": ",
+            vm.toString(f.shiftBps),
+            "}"
+        );
+    }
+
+    function _addrs(address[] memory xs) private pure returns (string memory out) {
+        out = "[";
+        for (uint256 i = 0; i < xs.length; ++i) {
+            out = string.concat(out, i == 0 ? "" : ", ", _q(vm.toString(xs[i])));
+        }
+        out = string.concat(out, "]");
+    }
+
+    function _kv(string memory key, string memory value) private pure returns (string memory) {
+        return string.concat("\"", key, "\": ", value, ", ");
+    }
+
+    function _q(string memory s_) private pure returns (string memory) {
+        return string.concat("\"", s_, "\"");
+    }
+
+    function _arr(uint256[] memory xs) private pure returns (string memory out) {
+        out = "[";
+        for (uint256 i = 0; i < xs.length; ++i) {
+            out = string.concat(out, i == 0 ? "" : ", ", _q(vm.toString(xs[i])));
+        }
+        out = string.concat(out, "]");
+    }
+
     function _basketLine(uint256[] memory balances) internal pure returns (string memory) {
         return string.concat(_amount(balances[0], 0), " / ", _amount(balances[1], 1), " / ", _amount(balances[2], 2));
     }
@@ -847,21 +1012,24 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
 ///         on by default and left on). A `Test` contract has a stable address and inherits the
 ///         engine directly; a script deploys this.
 contract PricePathWalker is PricePathEngine {
-    function walkAndReport() external returns (string memory) {
+    function walkAndReport() external returns (string memory report_, string memory json_) {
         deployExtruction();
-        return report(walk());
+        Run memory run = walk();
+        return (report(run), json(run));
     }
 }
 
 /// @title PricePath — the runnable form of the scripted market
 /// @notice `forge script script/PricePath.s.sol` walks the path on a mainnet fork and writes
-///         `results/price-path.txt`. Simulation only: nothing here is broadcast, and the oracle
+///         `results/price-path.txt` and its JSON twin `results/price-path.json`, the UI's data
+///         (T29). Simulation only: nothing here is broadcast, and the oracle
 ///         warps are cheatcodes, so this cannot be pointed at a live chain by accident.
 contract PricePath is Script, PricePathEngine {
     function run() external {
         createFork();
-        string memory out = new PricePathWalker().walkAndReport();
+        (string memory out, string memory data) = new PricePathWalker().walkAndReport();
         vm.writeFile("results/price-path.txt", out);
+        vm.writeFile("results/price-path.json", data);
         console.log(out);
     }
 }

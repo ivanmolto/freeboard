@@ -10,4 +10,7 @@ source .env
 set +a
 : "${MAINNET_RPC_URL:?set MAINNET_RPC_URL in .env}"
 : "${FORK_BLOCK:?set FORK_BLOCK in .env}"
-exec anvil --fork-url "$MAINNET_RPC_URL" --fork-block-number "$FORK_BLOCK" --auto-impersonate --port "${ANVIL_PORT:-8545}"
+# ANVIL_BLOCK_TIME (seconds) paces mining for the page to watch (T29, ui/walk.sh); unset, anvil
+# mines on demand as the agent expects.
+exec anvil --fork-url "$MAINNET_RPC_URL" --fork-block-number "$FORK_BLOCK" --auto-impersonate --port "${ANVIL_PORT:-8545}" \
+  ${ANVIL_BLOCK_TIME:+--block-time "$ANVIL_BLOCK_TIME"}
