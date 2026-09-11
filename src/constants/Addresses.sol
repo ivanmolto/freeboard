@@ -131,6 +131,51 @@ library Addresses {
     uint256 internal constant MIN_FORK_BLOCK = ROUTER_DEPLOY_BLOCK;
 
     // ---------------------------------------------------------------------------------
+    // Freeboard on mainnet — deployed Sep 11 (T24a) for the Ledger-signed ship()
+    // ---------------------------------------------------------------------------------
+
+    /// @dev `FreeboardExtruction`, deployed by `script/DeployExtruction.s.sol` from
+    ///      0x637e4569cFCaA4be5D97Fd35eB3A301296AB53F0 at nonce 0, in tx
+    ///      0xfb4616b7d0e47a220b764bb52bd538daac8d0182ff0f0debfa424b632596c04d. No constructor
+    ///      arguments, no owner, no storage, so the deployer's identity carries nothing. The
+    ///      Ledger-signed `ship()` names this address as the program's `_extruction` target,
+    ///      which is the only reason a mainnet copy exists: the fills stay on the fork.
+    ///      `PinnedAddressesForkTest.test_MainnetExtruction_RuntimeMatchesTheLocalBuild` asserts
+    ///      the deployed runtime equals `type(FreeboardExtruction).runtimeCode` — a two-sided
+    ///      comparison, since the hash below was taken from the local build, not the chain.
+    address internal constant MAINNET_EXTRUCTION = 0x8804F353252957bEd3B099dFbbe35B54AF280f41;
+
+    /// @dev First mainnet block at which `MAINNET_EXTRUCTION` has code (the deploy tx's block).
+    ///      AFTER `FORK_BLOCK`: the pinned fork predates it, so tests that need the mainnet
+    ///      extruction fork at this block or later on their own; nothing else moves.
+    uint256 internal constant MAINNET_EXTRUCTION_DEPLOY_BLOCK = 25_949_936;
+
+    /// @dev Runtime size and keccak of the local build (`out/FreeboardExtruction.sol`), which
+    ///      the deploy script asserted against the landed code and `cast code` re-read Sep 11.
+    uint256 internal constant MAINNET_EXTRUCTION_RUNTIME_SIZE = 7052;
+    bytes32 internal constant MAINNET_EXTRUCTION_RUNTIME_HASH =
+        0xcc7c96e6c97d94bb231bd12e19c1b8ff55b96f5c58fea379ae10abb9129884fd;
+
+    /// @dev The borrower's Ledger account (`wallet-cli` label `ethereum-2`, address verified on
+    ///      the device screen), which signed the mainnet `ship()` below. Holds ETH for gas and
+    ///      nothing else: no Aave position, no tokens, no allowance to Aqua — the position it
+    ///      shipped is inert by construction and `test_TheDeviceShippedStrategy_FillsOnTheFork`
+    ///      gives it a position and an allowance on a fork only.
+    address internal constant MAINNET_MAKER = 0x380436a603325F81Ecd40BF26ceF602D46E5aC4c;
+
+    /// @dev The device-signed `Aqua.ship(router, strategy, [WETH, WBTC, USDC], [10e18, 0.3e8,
+    ///      30_000e6])`, tx 0xc13c55e18bc748b5f85ec680fa14d759b30682b7296bf7ba84c2bf43d91f70c4,
+    ///      Sep 11. `strategy` is `ProgramBuilder.freeboardPosition(MAINNET_MAKER,
+    ///      MAINNET_EXTRUCTION, Curves.freeboard(), tokens, 500).strategy` — the same bytes every
+    ///      fork test ships — so the curve the borrower approved on the device is the curve
+    ///      those tests price. `results/ledger-ship.txt` holds the full calldata;
+    ///      `LedgerShipForkTest` reads the transaction back from mainnet and asserts it.
+    uint256 internal constant MAINNET_SHIP_BLOCK = 25_950_014;
+    bytes32 internal constant MAINNET_SHIP_TX = 0xc13c55e18bc748b5f85ec680fa14d759b30682b7296bf7ba84c2bf43d91f70c4;
+    bytes32 internal constant MAINNET_STRATEGY_HASH =
+        0xd8e168cdfee0697050bea8bc2c61ccbc2d03050740f65fac9bd68acf31bf3145;
+
+    // ---------------------------------------------------------------------------------
     // Tokens — symbol() and decimals() read on the fork at FORK_BLOCK, Sep 6
     // ---------------------------------------------------------------------------------
 
