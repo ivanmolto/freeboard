@@ -1,0 +1,25 @@
+{
+  "name": "freeboard-agent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Freeboard's keeper-taker: an LLM agent, bounded by the router, secrets from the Ledger Key Ring (T24b)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "keeper": "node --experimental-strip-types --no-warnings=ExperimentalWarning keeper.ts",
+    "probe": "node --experimental-strip-types --no-warnings=ExperimentalWarning probe.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.109.1",
+    "@strands-agents/sdk": "1.17.0",
+    "viem": "2.56.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.9"
+  }
+}
