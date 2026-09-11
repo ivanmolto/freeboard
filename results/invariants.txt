@@ -1,0 +1,124 @@
+# results/invariants.txt - T28
+# swap-vm's OWN invariant suite (test/invariants/CoreInvariants.t.sol at tag v1.0.2, imported
+# from node_modules, not copied) run against the Freeboard program - one _extruction (0x20) to
+# FreeboardExtruction, nothing else - on the DEPLOYED AquaSwapVMRouter
+# (0x111111338c5091E8440b67B168bAe16a668AC0De) and the deployed Aqua, over every directed pair
+# of the WETH / WBTC / USDC basket. Ethereum mainnet fork, FORK_BLOCK=25900000, forge 1.5.1-stable.
+# Raw output of the two commands below, captured Sep 11 2026. Never edited by hand.
+#
+# The suite: symmetry, quote/swap consistency (exact-in and exact-out; the "swap" side is real
+# ERC-20 movement through Aqua, measured on taker and maker), monotonicity, additivity,
+# rounding-favours-maker, balance sufficiency. Nothing skipped. There is no "strategy liveness"
+# check in the suite at v1.0.2. Two tolerances are relaxed from the defaults, each derived and
+# each paired with an exact assertion - see the natspec of test/invariants/FreeboardInvariants.t.sol:
+#   monotonicityToleranceBps 1  (the suite's smallest; _assertMonotoneToTheWei asserts the wei form)
+#   additivityTolerance      (SPREAD_AWAY - SPREAD_TOWARD) * SPREAD_AWAY * A in out-token wei + 2:
+#                            a split across a target crossing pays the taker at most 0.9 bps of
+#                            the first slice more than one fill; the single fill overcharges.
+#                            test_Additivity_TheGapIsTheSpreadTheSingleFillsModelDropped measures
+#                            the gap and reproduces it to the wei from the dropped spread.
+#
+# $ forge test --match-path test/invariants/FreeboardInvariants.t.sol -vv
+No files changed, compilation skipped
+
+Ran 9 tests for test/invariants/FreeboardInvariants.t.sol:FreeboardInvariantsForkTest
+[PASS] test_Additivity_TheGapIsTheSpreadTheSingleFillsModelDropped() (gas: 2109186)
+Logs:
+  WETH -> USDC
+    single fill of A + B         59857645617
+    A, then B on the live basket 59857695123
+    A, then B on the modelled    59857645617
+    gap (split - single)         49506
+    closed form                  49506
+    bound                        1800231
+  WETH -> WBTC
+    single fill of A + B         73977313
+    A, then B on the live basket 73977401
+    A, then B on the modelled    73977312
+    gap (split - single)         88
+    closed form                  88
+    bound                        2226
+
+[PASS] test_CoreInvariants_UsdcIn_WbtcOut() (gas: 8368404)
+Logs:
+  USDC -> WBTC, Alice at HF  1449999999986505166
+    exact-in amounts    5000638731 / 20002554926 / 60007664779
+    exact-out amounts   6180226 / 24720906 / 74162720
+    symmetryTolerance   1620
+    additivityTolerance 6676
+    monotonicityBps     1
+    roundingBps         100
+    skipped             none
+    monotone to the wei  yes
+
+[PASS] test_CoreInvariants_UsdcIn_WethOut() (gas: 8170672)
+Logs:
+  USDC -> WETH, Alice at HF  1449999999986505166
+    exact-in amounts    5000638731 / 20002554926 / 60007664779
+    exact-out amounts   2001925237102675337 / 8007700948410701350 / 24023102845232104051
+    symmetryTolerance   2
+    additivityTolerance 2162079256070090
+    monotonicityBps     1
+    roundingBps         100
+    skipped             none
+    monotone to the wei  yes
+
+[PASS] test_CoreInvariants_WbtcIn_UsdcOut() (gas: 8331939)
+Logs:
+  WBTC -> USDC, Alice at HF  1449999999986505166
+    exact-in amounts    6180226 / 24720906 / 74162720
+    exact-out amounts   5000638731 / 20002554926 / 60007664779
+    symmetryTolerance   2
+    additivityTolerance 5400691
+    monotonicityBps     1
+    roundingBps         100
+    skipped             none
+    monotone to the wei  yes
+
+[PASS] test_CoreInvariants_WbtcIn_WethOut() (gas: 7963414)
+Logs:
+  WBTC -> WETH, Alice at HF  1449999999986505166
+    exact-in amounts    6180226 / 24720906 / 74162720
+    exact-out amounts   2001925237102675337 / 8007700948410701350 / 24023102845232104051
+    symmetryTolerance   2
+    additivityTolerance 2162079252637837
+    monotonicityBps     1
+    roundingBps         100
+    skipped             none
+    monotone to the wei  yes
+
+[PASS] test_CoreInvariants_WethIn_UsdcOut() (gas: 8277909)
+Logs:
+  WETH -> USDC, Alice at HF  1449999999986505166
+    exact-in amounts    2001925237102675337 / 8007700948410701350 / 24023102845232104051
+    exact-out amounts   5000638731 / 20002554926 / 60007664779
+    symmetryTolerance   800667814
+    additivityTolerance 5400691
+    monotonicityBps     1
+    roundingBps         100
+    skipped             none
+    monotone to the wei  yes
+
+[PASS] test_CoreInvariants_WethIn_WbtcOut() (gas: 8127564)
+Logs:
+  WETH -> WBTC, Alice at HF  1449999999986505166
+    exact-in amounts    2001925237102675337 / 8007700948410701350 / 24023102845232104051
+    exact-out amounts   6180226 / 24720906 / 74162720
+    symmetryTolerance   647848482556
+    additivityTolerance 6676
+    monotonicityBps     1
+    roundingBps         100
+    skipped             none
+    monotone to the wei  yes
+
+[PASS] test_Fixture_IsTheFreeboardProgram_OffTarget_BetweenTwoRows() (gas: 340606)
+[PASS] test_Suite_CatchesAnExtructionThatBranchesOnTheStaticFlag() (gas: 1195422)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 442.35ms (162.54ms CPU time)
+
+Ran 1 test suite in 443.86ms (442.35ms CPU time): 9 tests passed, 0 failed, 0 skipped (9 total tests)
+#
+# $ forge test --match-path test/unit/Pricing.t.sol --match-test ASplitFill --fuzz-runs 2000
+Ran 1 test for test/unit/Pricing.t.sol:PricingTest
+[PASS] testFuzz_ASplitFill_PaysAtLeastTheSingleFill_AndAtMostTheBoundMore(uint64,uint48,uint64,uint256,uint8,uint64,uint64) (runs: 2000, μ: 381859, ~: 376279)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 855.75ms (855.01ms CPU time)
+Ran 1 test suite in 856.18ms (855.75ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

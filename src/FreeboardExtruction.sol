@@ -196,10 +196,17 @@ contract FreeboardExtruction is IExtruction, IStaticExtruction {
     ///      basket to the wrong composition at a fair price, and that is what this cap bounds —
     ///      PER FILL, not per block. This function is `view` and keeps no count, so a sequence
     ///      of `k` fills is bounded by `k` caps, each re-reading the health factor and the live
-    ///      basket and priced along the same path as one large fill (`_healthWeightedTarget`,
-    ///      convexity). A per-block budget would need storage written on the swap path, which
-    ///      gives up the structural quote/swap consistency above, and would ration the
-    ///      deleveraging the basket exists to do; `PerFillCap.t.sol` says what it would take.
+    ///      basket. The slices are priced along the live basket's path, which is NOT exactly
+    ///      the path one large fill is priced along: `_spreadNumerator` models a move as if the
+    ///      whole value in left the out leg, while the maker keeps the spread, so across a
+    ///      target crossing a split pays the taker at most `SPREAD_AWAY - SPREAD_TOWARD` of the
+    ///      first slice's spread more than one fill — under 0.9 bps of that slice — and never
+    ///      less; the single fill is the one that overcharges (convexity;
+    ///      `testFuzz_ASplitFill_PaysAtLeastTheSingleFill_AndAtMostTheBoundMore`, and measured on
+    ///      the deployed router by T28). A per-block budget would need storage written on the
+    ///      swap path, which gives up the structural quote/swap consistency above, and would
+    ///      ration the deleveraging the basket exists to do; `PerFillCap.t.sol` says what it
+    ///      would take.
     ///
     /// @dev WHY VALUE AND NOT DISTANCE. The first cut of this cap bounded the change in
     ///      `BasketDistance` a fill causes. That metric is blind along a whole family of

@@ -168,6 +168,23 @@ Separately, Aave's no-debt sentinel (`type(uint256).max`) is an answer, not a fa
 
 Both are pinned by [`test/unit/FailSafe.t.sol`](test/unit/FailSafe.t.sol): `test_RevertWhen_HealthFactorUnreadable` against a reverting mock pool, in both revert shapes found on mainnet, on both paths, on both sides, with nothing else read; and `test_NoDebt_PricesAtTopOfCurve`, to the wei, equal to HF 2.00 and everything above it and distinguishable from every leveraged row. `test/fork/HealthFactor.t.sol` shows the same refusal on the deployed router with real Aave positions.
 
+## SwapVM's own invariant suite, on the deployed router
+
+swap-vm ships an invariant suite for its instructions — `CoreInvariants.assertAllInvariantsWithConfig` in [`test/invariants/CoreInvariants.t.sol`](https://github.com/1inch/swap-vm/blob/v1.0.2/test/invariants/CoreInvariants.t.sol) at `v1.0.2`. [`test/invariants/FreeboardInvariants.t.sol`](test/invariants/FreeboardInvariants.t.sol) imports it from the pinned dependency and runs it against the Freeboard program — one `_extruction` to `FreeboardExtruction`, nothing else — on the deployed `AquaSwapVMRouter` and Aqua, over all six directed pairs of a WETH / WBTC / USDC basket, with the maker at HF 1.45 on Aave (targets interpolated between two rows). Every check runs; nothing is skipped. Raw output: [`results/invariants.txt`](results/invariants.txt).
+
+| Check (suite's name) | Result | Notes |
+|---|---|---|
+| Quote/swap consistency, exact-in and exact-out | pass, 0 tolerance | the "swap" side is real ERC-20 movement through Aqua, measured on taker and maker; `test_Suite_CatchesAnExtructionThatBranchesOnTheStaticFlag` shows the check fails on this harness for a target that shaves one wei on the swap path only |
+| Symmetry (exact-out of exact-in returns the input) | pass | tolerance is the suite's 2 wei restated across decimals: `2 × ceil(unitOut / unitIn)` |
+| Rounding favours maker (1–1000-wei fills never beat spot) | pass, default 100 bps | |
+| Balance sufficiency | pass | |
+| Monotonicity (larger fill, no better price) | pass at 1 bps, the suite's smallest | the default 0 fails on wei flooring of the smaller fill's output; `_assertMonotoneToTheWei` asserts the exact wei-level form beside it |
+| Additivity (one fill pays at least two slices) | **pass at a derived bound, not 0** | see below |
+
+**The finding.** A fill split in two, across a target crossing, pays the taker slightly *more* than the same fill in one piece: $60,000 WETH → USDC as $20,000 then $40,000 pays 49,506 USDC wei ($0.0495) more; WETH → WBTC, 88 WBTC wei ($0.07). The cause is in the single fill: `_spreadNumerator` prices a move as if the whole value in left the out leg, but the maker keeps the spread, so after the first slice the live basket is `S(A)` larger than the single fill's model of that point, and the second slice — priced from the live basket, as the router does — reaches its crossing that much later. Pricing the second slice from the *modelled* state reproduces the single fill to the wei; the gap is exactly the dropped spread at the crossed rate step (`test_Additivity_TheGapIsTheSpreadTheSingleFillsModelDropped`). It is bounded by `(SPREAD_AWAY − SPREAD_TOWARD) × S(A)`, under 0.9 bps of the first slice, is zero where nothing crosses, and never goes the other way — the single fill is the one that overcharges (`testFuzz_ASplitFill_PaysAtLeastTheSingleFill_AndAtMostTheBoundMore`, 2,000 runs). The suite's additivity tolerance is that bound, in out-token wei, not a fitted number. swap-vm's own fee strategies set `skipAdditivity = true`; Freeboard keeps the check on. Not fixed in the deployed contract: the fix is to price each fill along the path the basket actually takes, which changes `FreeboardExtruction`'s bytecode and therefore the strategy the Ledger signed on mainnet.
+
+The suite at `v1.0.2` has no strategy-liveness check; the nearest is the consistency check's non-zero-quote assertion, which runs on every amount, both sides, all six pairs.
+
 ## Toolchain
 
 - Node 22 · yarn 1.22 · Foundry `forge 1.5.1-stable` · solc 0.8.30 (via foundry.toml)

@@ -199,15 +199,26 @@ holds per fill and therefore over any sequence: no fill beats the oracle, so
 every fill pays the maker. The composition bound is the cap, applied to each
 fill, each one re-reading the health factor and the live basket.
 
-Splitting a fill also does not buy a better price. The spread schedule is convex
-along a move — the marginal spread never decreases — so a larger fill never gets
-a better average price than a smaller one, and a sequence is priced along the
-same path as one large fill.
+Splitting a fill buys at most 0.9 bps of the first slice, and only across a
+target crossing — measured, and the single fill is the one that overcharges.
+The spread schedule is convex along a move — the marginal spread never
+decreases — so a larger fill never gets a better average price than a smaller
+one. But a sequence is not priced along exactly the path of one large fill:
+the pricing rule models a move as if the whole value in left the out leg, while
+the maker keeps the spread, so after the first slice the live basket is
+`S(A)` larger than the single fill's model of that point and the second slice
+reaches its target crossing that much later. The gap is at most
+`(SPREAD_AWAY − SPREAD_TOWARD) × S(A)` — under 0.9 bps of the first slice — and
+zero where nothing crosses. On the deployed router, a $60,000 WETH → USDC fill
+split $20,000 / $40,000 pays the taker $0.0495 more than in one piece;
+predicted to the wei by that formula (`results/invariants.txt`).
 
 > `testFuzz_EveryFillInAnySequence_IsWithinTheCap`,
 > `testFuzz_Pricing_IsMonotoneInSize`,
 > `testFuzz_Pricing_IsMonotoneInDistanceReduction`,
-> `test_AFillAcrossATarget_IsPricedPieceByPiece`.
+> `test_AFillAcrossATarget_IsPricedPieceByPiece`,
+> `testFuzz_ASplitFill_PaysAtLeastTheSingleFill_AndAtMostTheBoundMore`,
+> `test_Additivity_TheGapIsTheSpreadTheSingleFillsModelDropped`.
 
 ---
 

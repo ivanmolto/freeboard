@@ -430,9 +430,11 @@ contract PerFillCapTest is Test {
     /// @dev PER FILL, AND ONLY PER FILL. What is bounded is each fill against the basket as it
     ///      then stands: no ordering, side, direction or splitting of inputs lets a single
     ///      fill past the cap. A sequence of `k` fills is bounded by `k` caps and nothing
-    ///      tighter — `extruction()` is `view` and keeps no count, and the slices are priced
-    ///      along the same path as one large fill would be (convexity), so splitting costs a
-    ///      taker nothing but gas. This test does not claim a per-block bound and does not
+    ///      tighter — `extruction()` is `view` and keeps no count. Splitting buys a taker at
+    ///      most 0.9 bps of the first slice, and only across a target crossing: the single
+    ///      fill's model drops the spread the maker kept, so it is the one that overcharges
+    ///      (`testFuzz_ASplitFill_PaysAtLeastTheSingleFill_AndAtMostTheBoundMore`; measured on the
+    ///      deployed router by T28). This test does not claim a per-block bound and does not
     ///      advance blocks; there is nothing block-shaped to assert.
     ///
     ///      WHAT A PER-BLOCK BOUND WOULD NEED, AND WHY IT IS OUT OF SCOPE. A slot per strategy

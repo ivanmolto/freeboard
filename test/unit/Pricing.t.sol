@@ -510,6 +510,59 @@ contract PricingTest is Test {
         assertLe(outLarge * small, (outSmall + 1) * large, "the larger fill got a better price");
     }
 
+    /// @notice A fill split in two never pays the taker less than the same fill in one piece,
+    ///         and never more than `SPREAD_AWAY - SPREAD_TOWARD` of the spread the first slice
+    ///         paid — under 0.9 bps of the first slice's value. Any basket, any health factor,
+    ///         any pair, any two slices that fit the out leg.
+    /// @dev THE SINGLE FILL IS THE ONE THAT OVERCHARGES. `_spreadNumerator` prices a move as if
+    ///      the whole value in left the out leg (`after_[legOut] -= x`), but the maker keeps the
+    ///      spread: after the first slice the out leg really holds `S(A)` more, and the basket
+    ///      is `S(A)` larger, than the single fill's model of that point. The second slice is
+    ///      priced from the live basket, so it reaches each target crossing up to `S(A)` of
+    ///      value later — every crossing along a move raises the marginal spread, so later is
+    ///      cheaper for the taker. Where no leg crosses a target during the second slice the
+    ///      two agree to rounding; the gap exists only across a crossing. Bound: each moving
+    ///      leg's distance term shifts by at most `S(A)`, at `2 * SPREAD_SLOPE` per unit, so
+    ///      the second slice's spread falls by at most `4 * SPREAD_SLOPE * S(A)`, which is
+    ///      `(SPREAD_AWAY - SPREAD_TOWARD) * S(A)`, and `S(A) <= SPREAD_AWAY * A`. Rounding is
+    ///      two wei: the split floors twice and ceils its spread twice. T28 measures the gap on
+    ///      the deployed router (`test_Additivity_TheGapIsTheSpreadTheSingleFillsModelDropped`).
+    function testFuzz_ASplitFill_PaysAtLeastTheSingleFill_AndAtMostTheBoundMore(
+        uint64 weth,
+        uint48 wbtc,
+        uint64 usdc,
+        uint256 hfSeed,
+        uint8 pair,
+        uint64 sizeA,
+        uint64 sizeB
+    )
+        public
+    {
+        _setBasket(weth, wbtc, usdc);
+        _setHealthFactor(1e18 + hfSeed % 1.5e18);
+        (address tokenIn, address tokenOut) = _pair(pair);
+
+        uint256 roomIn = balance[tokenOut] * _unit(tokenOut) / _unit(tokenIn);
+        vm.assume(roomIn >= 2);
+        uint256 a = 1 + sizeA % (roomIn / 2);
+        uint256 b = 1 + sizeB % (roomIn - a);
+
+        uint256 single = _exactIn(tokenIn, tokenOut, a + b);
+
+        uint256 outA = _exactIn(tokenIn, tokenOut, a);
+        balance[tokenIn] += a;
+        balance[tokenOut] -= outA;
+        uint256 split = outA + _exactIn(tokenIn, tokenOut, b);
+
+        uint256 spreadA = a * _unit(tokenIn) - outA * _unit(tokenOut);
+        uint256 bound = (AWAY - TOWARD) * spreadA / ONE / _unit(tokenOut);
+
+        assertGe(split + 2, single, "the split paid the taker less than one fill");
+        assertLe(split, single + bound + 2, "the split paid the taker more than the bound");
+        // 0.9 bps = 9 / 100,000.
+        assertLe(bound, 9 * a * _unit(tokenIn) / 100_000 / _unit(tokenOut) + 1, "the bound is under 0.9 bps of the first slice");
+    }
+
     // -----------------------------------------------------------------------------------
     // 4. The non-swapped leg comes from Aqua, and it matters
     // -----------------------------------------------------------------------------------
