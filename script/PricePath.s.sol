@@ -31,11 +31,12 @@ import { ProgramBuilder } from "../test/utils/ProgramBuilder.sol";
 ///         paired control (T27), the UI (T29) and the video (T32) all show the same run.
 ///
 ///         The world is Alice's: a real Aave v3 position — 100 WETH and 3 WBTC of collateral
-///         against USDC debt — and a Freeboard basket of 10 WETH / 0.3 WBTC / 30,000 USDC
-///         shipped through the DEPLOYED Aqua, its USDC leg drawn from the USDC she borrowed.
-///         The market is eight rungs of oracle: HF 2.00, 1.80, 1.60, 1.45, 1.30, 1.20, 1.15,
-///         1.10. At each rung a taker arrives and takes, up to four times, whatever the pricing
-///         has made attractive.
+///         against USDC debt — and an $80,000 Freeboard basket shipped through the DEPLOYED
+///         Aqua at the curve's top row (50 / 30 / 20 by value at the pinned prices), its USDC
+///         leg drawn from the USDC she borrowed. The market is eight rungs of oracle: HF 2.00,
+///         1.80, 1.60, 1.45, 1.30, 1.20, 1.15, 1.10. At the top the basket is where she said it
+///         should be and no taker has anything to take; at each rung below, a taker arrives and
+///         takes, up to four times, whatever the pricing has made attractive.
 ///
 /// @dev THE TAKER RULE, IN ONE PARAGRAPH. At the health factor the Pool reports, the curve says
 ///      what the basket should be. The taker pays in the leg the basket wants MOST and takes out
@@ -43,8 +44,10 @@ import { ProgramBuilder } from "../test/utils/ProgramBuilder.sol";
 ///      and the out leg itself. That size is exactly the largest fill that stays TOWARD target on
 ///      both legs, so every fill on this path is a ten-basis-point fill — the cheapest the
 ///      schedule offers, which is precisely why a rational arbitrageur takes it. Nothing about
-///      the rule knows the words "rebalance" or "deleverage": the curve moves under it, and the
-///      same greedy rule that sells the borrower USDC at HF 2.00 pays her USDC at HF 1.10.
+///      the rule knows the words "rebalance" or "deleverage": the curve moves under it. At HF
+///      2.00 it finds nothing to take; from 1.80 down it pays her USDC and takes collateral out;
+///      at the clamped bottom, where the target has stopped moving and the prices have not, it
+///      sells her a little collateral back.
 ///
 /// @dev DETERMINISM IS THE DELIVERABLE (`test_PricePath_RunsIdenticallyThreeTimes`). Every input
 ///      is fixed: the fork block, the shipped amounts, the rungs, the fill rule, the four-fill
@@ -95,10 +98,11 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
     uint256 internal constant AAVE_WETH_COLLATERAL = 100e18;
     uint256 internal constant AAVE_WBTC_COLLATERAL = 3e8;
 
-    /// @dev The basket she ships. Her USDC leg is USDC she borrowed.
-    uint256 internal constant SHIPPED_WETH = 10 ether;
-    uint256 internal constant SHIPPED_WBTC = 0.3e8;
-    uint256 internal constant SHIPPED_USDC = 30_000e6;
+    /// @dev The value of the basket she ships, in value units ($80,000). Its COMPOSITION is not
+    ///      typed: `shippedAmounts` derives it from the curve's top row at the pinned prices, so
+    ///      the basket starts where the borrower said it should be at HF 2.00 and the first rung
+    ///      has nothing to take. Her USDC leg is USDC she borrowed.
+    uint256 internal constant SHIPPED_VALUE = 80_000 * VALUE_PER_USD;
 
     /// @dev The per-fill cap she signs into the args: 5% of the basket's value per fill.
     uint16 internal constant MAX_SHIFT_BPS = 500;
@@ -132,9 +136,13 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
     /// @param referenceOut `PricingReference`'s answer for the same fill — the price derived by
     ///        integrating the marginal spread rather than by the distance delta.
     /// @param fairOut What the oracle alone would pay: `valueIn / unitOut`, no spread.
-    /// @param spreadValue `valueIn - amountOut * unitOut` — what the borrower kept, value units.
+    /// @param spreadValue `valueIn - amountOut * unitOut` when positive — what the borrower kept,
+    ///        value units. Zero for a fill that paid her less than the oracle.
     /// @param shiftBps The share of the basket this fill moved, against the maker's cap.
     /// @param takerPaid/takerGot/makerGot/makerPaid Real ERC-20 balance deltas.
+    /// @param lossValue `amountOut * unitOut - valueIn` when positive — what the borrower gave
+    ///        away above the oracle. Always zero on a Freeboard fill (no fill beats the oracle);
+    ///        the paired control's unguarded arm (T27) is where it is not.
     struct Fill {
         uint256 legIn;
         uint256 legOut;
@@ -150,6 +158,7 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         uint256 takerGot;
         uint256 makerGot;
         uint256 makerPaid;
+        uint256 lossValue;
     }
 
     /// @notice One rung: the oracle move, the health factor it produced, the target it slid to,
@@ -180,6 +189,7 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         Step[] steps;
         uint256 fills;
         uint256 spreadValue;
+        uint256 lossValue;
         uint256[] finalBalances;
         uint256 startHealthFactor;
         uint256 finalHealthFactor;
@@ -337,6 +347,7 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
             run.fills += step.fills.length;
             for (uint256 k = 0; k < step.fills.length; ++k) {
                 run.spreadValue += step.fills[k].spreadValue;
+                run.lossValue += step.fills[k].lossValue;
             }
         }
 
@@ -509,7 +520,9 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         fill.takerGot = IERC20(tokenOut).balanceOf(taker) - takerOut;
         fill.makerGot = IERC20(tokenIn).balanceOf(alice) - makerIn;
         fill.makerPaid = makerOut - IERC20(tokenOut).balanceOf(alice);
-        fill.spreadValue = fill.valueIn - fill.amountOut * unit[legOut];
+        uint256 valueOut = fill.amountOut * unit[legOut];
+        fill.spreadValue = fill.valueIn > valueOut ? fill.valueIn - valueOut : 0;
+        fill.lossValue = valueOut > fill.valueIn ? valueOut - fill.valueIn : 0;
     }
 
     // -----------------------------------------------------------------------------------
@@ -539,21 +552,33 @@ abstract contract PricePathEngine is CommonBase, StdCheats {
         POOL.borrow(USDC, amount, VARIABLE_RATE, 0, who);
     }
 
+    /// @notice What she ships: `SHIPPED_VALUE` split by the curve's TOP ROW at the prices of the
+    ///         moment, floored to a wei of each token.
+    /// @dev HOOK. An arm whose instruction calls a different composition fair overrides this with
+    ///      the same `SHIPPED_VALUE` split its own way (the paired control's stock constant-product
+    ///      arm, which is at the oracle only with its legs equal in value).
+    function shippedAmounts() internal view virtual returns (uint256[] memory amounts) {
+        uint256[] memory w = this.weightsAt(Curves.freeboard(), rungs()[0]);
+        uint256[] memory u = units();
+        amounts = new uint256[](LEGS);
+        for (uint256 l = 0; l < LEGS; ++l) {
+            amounts[l] = (w[l] * SHIPPED_VALUE) / ONE / u[l];
+        }
+    }
+
     /// @dev Ships the three legs and approves Aqua without limit. T22 approves the exact shipped
     ///      amounts to make the point that the allowance, not the shipped balance, is what makes a
     ///      position fillable; a path of two dozen fills is where a real maker approves once, and
     ///      an allowance that ran out mid-path would be a fixture bug masquerading as a market.
-    ///      Ships whatever `position` holds: 10 WETH and 0.3 WBTC dealt to her wallet, and
-    ///      30,000 of the USDC she borrowed.
+    ///      Ships whatever `position` holds: the WETH and WBTC legs dealt to her wallet, the USDC
+    ///      leg out of what she borrowed.
     function _ship() internal {
         address[] memory tokens = Curves.freeboardTokens();
-        uint256[] memory amounts = new uint256[](LEGS);
-        amounts[0] = SHIPPED_WETH;
-        amounts[1] = SHIPPED_WBTC;
-        amounts[2] = SHIPPED_USDC;
+        uint256[] memory amounts = shippedAmounts();
+        require(amounts[2] <= borrowed, "the USDC leg is larger than the borrow");
 
-        deal(WETH, alice, SHIPPED_WETH);
-        deal(WBTC, alice, SHIPPED_WBTC);
+        deal(WETH, alice, amounts[0]);
+        deal(WBTC, alice, amounts[1]);
 
         vm.startPrank(alice);
         bytes32 shippedHash = IAqua(AQUA).ship(ROUTER, position.strategy, tokens, amounts);

@@ -2,39 +2,35 @@ Freeboard price path (T23)
 ==========================
 
 strategy hash : 0xf24c618930f7016aa533d005062ef1147d52aae3d50cbae005b9e985be7b267e
-transcript    : 0xf9f19d333b17515b545476dbf52a113a5050d2259ac73eb99d0bf7a5e3b31e2c
+transcript    : 0x8266d26e0634ddd216a6d2a84556714303e1466b7a268d71a32a934bb6d48489
 borrowed USDC : 198332.28 USDC
-shipped       : 10.0000 WETH / 0.300000 WBTC / 30000.00 USDC
+shipped       : 16.0154 WETH / 0.296651 WBTC / 16002.04 USDC
 
-HF 2.00  target 50.00 / 30.00 / 20.00  basket 49.37 / 30.62 / 20.00  distance 36.96 -> 1.25
-    1.5864 WETH -> 3958.70 USDC   spread $3.96   shift 500 bps
-    1.5865 WETH -> 3958.90 USDC   spread $3.96   shift 500 bps
-    1.5865 WETH -> 3959.09 USDC   spread $3.96   shift 500 bps
-    0.9089 WETH -> 2268.03 USDC   spread $2.27   shift 287 bps
+HF 2.00  target 50.00 / 30.00 / 20.00  basket 50.00 / 30.00 / 20.00  distance 0.00 -> 0.00
 HF 1.80  target 45.00 / 27.00 / 28.00  basket 45.00 / 27.00 / 28.00  distance 12.52 -> 0.01
-    2407.45 USDC -> 1.0698 WETH   spread $2.41   shift 331 bps
-    2155.94 USDC -> 0.029576 WBTC   spread $2.16   shift 296 bps
+    2880.37 USDC -> 1.2800 WETH   spread $2.88   shift 392 bps
+    1727.44 USDC -> 0.023698 WBTC   spread $1.73   shift 235 bps
 HF 1.60  target 40.00 / 24.00 / 36.00  basket 40.00 / 24.00 / 36.00  distance 11.14 -> 0.01
-    2334.18 USDC -> 1.1669 WETH   spread $2.33   shift 348 bps
-    1401.16 USDC -> 0.021624 WBTC   spread $1.40   shift 209 bps
+    2356.46 USDC -> 1.1780 WETH   spread $2.36   shift 348 bps
+    1414.00 USDC -> 0.021822 WBTC   spread $1.41   shift 209 bps
 HF 1.45  target 35.00 / 20.00 / 45.00  basket 35.00 / 20.00 / 45.00  distance 13.41 -> 0.01
-    2248.67 USDC -> 1.2404 WETH   spread $2.25   shift 357 bps
-    1979.99 USDC -> 0.033719 WBTC   spread $1.98   shift 314 bps
+    2269.73 USDC -> 1.2521 WETH   spread $2.27   shift 357 bps
+    1998.54 USDC -> 0.034035 WBTC   spread $2.00   shift 314 bps
 HF 1.30  target 30.00 / 16.00 / 54.00  basket 30.00 / 16.00 / 54.00  distance 12.58 -> 0.01
-    1947.47 USDC -> 1.1982 WETH   spread $1.95   shift 328 bps
-    1793.43 USDC -> 0.034066 WBTC   spread $1.79   shift 302 bps
+    1965.72 USDC -> 1.2095 WETH   spread $1.97   shift 328 bps
+    1810.23 USDC -> 0.034385 WBTC   spread $1.81   shift 302 bps
 HF 1.20  target 23.33 / 12.00 / 64.67  basket 23.33 / 12.00 / 64.66  distance 17.38 -> 0.01
-    2869.36 USDC -> 1.9126 WETH   spread $2.87   shift 500 bps
-    1901.16 USDC -> 0.039121 WBTC   spread $1.90   shift 332 bps
-    217.66 USDC -> 0.1451 WETH   spread $0.22   shift 38 bps
+    2896.24 USDC -> 1.9305 WETH   spread $2.90   shift 500 bps
+    1918.98 USDC -> 0.039488 WBTC   spread $1.92   shift 332 bps
+    219.70 USDC -> 0.1464 WETH   spread $0.22   shift 38 bps
 HF 1.15  target 20.00 / 10.00 / 70.00  basket 20.00 / 10.00 / 70.00  distance 8.74 -> 0.01
-    1524.25 USDC -> 1.0602 WETH   spread $1.52   shift 270 bps
-    946.81 USDC -> 0.020330 WBTC   spread $0.95   shift 168 bps
+    1538.54 USDC -> 1.0701 WETH   spread $1.54   shift 270 bps
+    955.68 USDC -> 0.020521 WBTC   spread $0.96   shift 168 bps
 HF 1.10  target 20.00 / 10.00 / 70.00  basket 20.00 / 10.00 / 70.00  distance 1.84 -> 0.00
-    0.2498 WETH -> 342.87 USDC   spread $0.34   shift 62 bps
-    0.003850 WBTC -> 171.15 USDC   spread $0.17   shift 31 bps
+    0.2522 WETH -> 346.08 USDC   spread $0.35   shift 62 bps
+    0.003886 WBTC -> 172.75 USDC   spread $0.17   shift 31 bps
 
-fills         : 19
-spread earned : $38.40
+fills         : 15
+spread earned : $24.47
 final HF      : 1.10
-final basket  : 8.1249 WETH / 0.125414 WBTC / 39068.81 USDC
+final basket  : 8.2010 WETH / 0.126589 WBTC / 39434.84 USDC

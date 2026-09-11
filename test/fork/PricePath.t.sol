@@ -103,24 +103,30 @@ contract PricePathForkTest is Test, PricePathEngine {
         Run memory run = walk();
 
         // --- the position she shipped -------------------------------------------------
-        assertEq(run.shipped[0], SHIPPED_WETH, "Aqua accounts the WETH leg");
-        assertEq(run.shipped[1], SHIPPED_WBTC, "Aqua accounts the WBTC leg");
-        assertEq(run.shipped[2], SHIPPED_USDC, "Aqua accounts the USDC leg");
-        assertGt(run.borrowed, SHIPPED_USDC, "her USDC leg came out of the USDC she borrowed");
+        // $80,000 at the curve's top row: at HF 2.00 the basket IS the target, to the rounding of
+        // a wei per leg, so its distance is below the dust floor and no taker has anything to take.
+        // That is the point of shipping at the row rather than at round numbers: the first fill on
+        // the path is a deleverage, not a rebalance of a basket that was shipped off-target.
+        for (uint256 l = 0; l < LEGS; ++l) {
+            assertGt(run.shipped[l], 0, "every leg shipped");
+        }
+        assertGe(run.borrowed, run.shipped[2], "her USDC leg came out of the USDC she borrowed");
+        assertApproxEqAbs(run.steps[0].totalBefore, SHIPPED_VALUE, VALUE_PER_USD, "the basket is worth $80,000 at the top");
+        assertLt(run.steps[0].distanceBefore, DUST_BPS * 1e14, "at HF 2.00 the basket is at the top row");
+        assertEq(run.steps[0].fills.length, 0, "at HF 2.00, at target, no taker has anything to take");
 
         // --- the path ------------------------------------------------------------------
         uint256[] memory hfs = rungs();
         assertEq(run.steps.length, hfs.length, "one step per rung");
-        for (uint256 i = 0; i < run.steps.length; ++i) {
+        for (uint256 i = 1; i < run.steps.length; ++i) {
             Step memory step = run.steps[i];
             assertApproxEqAbs(step.healthFactor, hfs[i], HF_TOLERANCE, "the rung was landed on");
-            if (i > 0) {
-                assertLt(step.healthFactor, run.steps[i - 1].healthFactor, "the health factor fell");
-            }
+            assertLt(step.healthFactor, run.steps[i - 1].healthFactor, "the health factor fell");
             assertGt(step.fills.length, 0, "a taker arrived at this rung");
             assertLe(step.fills.length, MAX_FILLS_PER_STEP, "no more takers than the budget");
             assertLt(step.distanceAfter, step.distanceBefore, "the rung's fills moved the basket toward target");
         }
+        assertApproxEqAbs(run.steps[0].healthFactor, hfs[0], HF_TOLERANCE, "the top rung was landed on");
         assertApproxEqAbs(run.startHealthFactor, 2.0e18, HF_TOLERANCE, "the path starts at HF 2.00");
         assertApproxEqAbs(run.finalHealthFactor, 1.1e18, HF_TOLERANCE, "the path ends at HF 1.10");
         assertGt(run.finalHealthFactor, ONE, "never once liquidatable");
@@ -138,15 +144,21 @@ contract PricePathForkTest is Test, PricePathEngine {
         _assertTargetIs(run.steps[7], 0.2e18, 0.1e18, 0.7e18, "HF 1.10 clamps to the bottom row");
         assertLt(run.steps[7].healthFactor, run.steps[6].healthFactor, "1.10 is below 1.15");
 
-        // --- the trade reverses as her margin thins ------------------------------------
-        // At HF 2.00 the basket is short WETH and long USDC, so the taker SELLS her collateral
-        // and takes USDC out. By HF 1.30 the curve wants 54% USDC and the same greedy rule PAYS
-        // USDC in and takes collateral out: the deleverage. Nothing in the taker rule changed.
-        assertEq(run.steps[0].fills[0].legIn, 0, "at HF 2.00 the taker pays WETH in");
-        assertEq(run.steps[0].fills[0].legOut, 2, "at HF 2.00 the taker takes USDC out");
-        for (uint256 k = 0; k < run.steps[4].fills.length; ++k) {
-            assertEq(run.steps[4].fills[k].legIn, 2, "at HF 1.30 the taker pays USDC in");
-            assertNotEq(run.steps[4].fills[k].legOut, 2, "at HF 1.30 the taker takes collateral out");
+        // --- every fill while the target moves is a deleverage ---------------------------
+        // From HF 1.80 to 1.15 the curve wants more USDC at every rung than the fall in prices
+        // has given the basket, so the same greedy rule PAYS USDC in and takes collateral out
+        // every time. At 1.10 the target has stopped moving (clamped) and the prices have not:
+        // the collateral legs have drifted UNDER their weights, and the rule sells her a little
+        // collateral back. Nothing in the taker rule changed; the curve moved under it.
+        for (uint256 i = 1; i < 7; ++i) {
+            for (uint256 k = 0; k < run.steps[i].fills.length; ++k) {
+                assertEq(run.steps[i].fills[k].legIn, 2, "while the target moves the taker pays USDC in");
+                assertNotEq(run.steps[i].fills[k].legOut, 2, "...and takes collateral out");
+            }
+        }
+        for (uint256 k = 0; k < run.steps[7].fills.length; ++k) {
+            assertNotEq(run.steps[7].fills[k].legIn, 2, "at the clamped bottom the taker pays collateral in");
+            assertEq(run.steps[7].fills[k].legOut, 2, "...and takes USDC out");
         }
         // She ends up holding much less collateral and much more of the debt asset.
         assertLt(run.finalBalances[0], run.shipped[0], "the WETH leg shrank");
