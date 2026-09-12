@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Freeboard">
+  <clipPath id="r"><rect width="64" height="64" rx="14"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="64" height="64" fill="#F5F7F8"/>
+    <path d="M0 35C10 31.5 22 38.5 32 35S54 31.5 64 35V64H0Z" fill="#E0A93B"/>
+    <circle cx="40.75" cy="30" r="10.5" fill="none" stroke="#0E2233" stroke-width="5"/>
+    <rect x="26.75" y="27.5" width="31" height="5" fill="#0E2233"/>
+    <rect x="6.25" y="16" width="3.5" height="28" fill="#0E2233"/>
+    <rect x="9.75" y="18" width="15" height="4" fill="#0E2233"/>
+    <rect x="9.75" y="27.5" width="9" height="5" fill="#0E2233"/>
+    <rect x="9.75" y="38" width="6" height="4" fill="#0E2233"/>
+  </g>
+</svg>
