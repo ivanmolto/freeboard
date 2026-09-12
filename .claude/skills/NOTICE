@@ -1,0 +1,6 @@
+Copyright Ledger SAS, from github.com/LedgerHQ/agent-skills, unmodified.
+
+The wallet-cli/ and dmk/ directories are Ledger's agent skills as installed by
+`npx skills add ledgerhq/agent-skills` on Sep 10 2026 (wallet-cli 2.1.0). They are
+included so the Ledger flow in this repository can be reproduced with a coding
+agent under the same rules it was built under; Freeboard makes no claim to them.
