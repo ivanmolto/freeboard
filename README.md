@@ -10,15 +10,52 @@ Built on 1inch Aqua and SwapVM. The strategy executes on the deployed `AquaSwapV
 
 Each section links to the evidence below.
 
-1. [**Deployed contracts**](#1-deployed-contracts) — the two 1inch contracts the strategy runs on, matched to their tags by bytecode, and the fork block everything is pinned to.
-2. [**The demo page**](#2-the-demo-page-the-target-moves) — one page whose job is to make the *target* visibly move as the health factor falls; replays the committed run, or reads a live anvil walking the same path as transactions.
-3. [**Hard questions**](#3-hard-questions) — front-running a public curve, a wrong health factor, "isn't this a stop-loss", why no keeper or enclave, the debt — each answered by a named test.
-4. [**Ledger**](#4-ledger-the-human-approves-the-curve-an-agent-trades-the-chain-enforces) — the borrower signed the curve on a Nano X and it is on mainnet; an LLM agent trades inside it with its secrets under the Key Ring; the router refuses what exceeds it — `FreeboardFillExceedsMaxShift(945, 500)` in the judged run — and [what this does not protect](#what-this-does-not-protect).
-5. [**Fail-safe**](#5-fail-safe-an-unreadable-health-factor-is-a-refused-fill-not-a-price) — an unreadable health factor is a refused fill, never a price; Aave cannot liquidate in that state either.
-6. [**Invariants**](#6-swapvms-own-invariant-suite-on-the-deployed-router) — swap-vm's own suite run against the Freeboard program on the deployed router, every check on, and the one finding it produced.
-7. [**Toolchain**](#7-toolchain) — versions, and the three commands that build and test from a clean clone.
+1. [**Setup**](#1-setup) — prerequisites, the `.env` the fork tests read, and the commands that build and test from a clean clone, with or without an archive RPC.
+2. [**Deployed contracts**](#2-deployed-contracts) — the two 1inch contracts the strategy runs on, matched to their tags by bytecode, and the fork block everything is pinned to.
+3. [**The demo page**](#3-the-demo-page-the-target-moves) — one page whose job is to make the *target* visibly move as the health factor falls; replays the committed run, or reads a live anvil walking the same path as transactions.
+4. [**Hard questions**](#4-hard-questions) — front-running a public curve, a wrong health factor, "isn't this a stop-loss", why no keeper or enclave, the debt — each answered by a named test.
+5. [**Ledger**](#5-ledger-the-human-approves-the-curve-an-agent-trades-the-chain-enforces) — the borrower signed the curve on a Nano X and it is on mainnet; an LLM agent trades inside it with its secrets under the Key Ring; the router refuses what exceeds it — `FreeboardFillExceedsMaxShift(945, 500)` in the judged run — and [what this does not protect](#what-this-does-not-protect).
+6. [**Fail-safe**](#6-fail-safe-an-unreadable-health-factor-is-a-refused-fill-not-a-price) — an unreadable health factor is a refused fill, never a price; Aave cannot liquidate in that state either.
+7. [**Invariants**](#7-swapvms-own-invariant-suite-on-the-deployed-router) — swap-vm's own suite run against the Freeboard program on the deployed router, every check on, and the one finding it produced.
+8. [**Toolchain**](#8-toolchain) — versions, what `forge test` runs, and how the page is built and hosted.
 
-## 1. Deployed contracts
+## 1. Setup
+
+**Prerequisites**
+
+- [Foundry](https://getfoundry.sh) `1.5.1` — `forge`, `anvil` and `cast` are all used; install with `foundryup`.
+- Node `22` and yarn `1.22` (`package.json` pins `yarn@1.22.22`). The 1inch dependencies are git references, not npm packages, so `git` must be on the path for `yarn install`.
+- `python3`, only for `ui/walk.sh`, which uses it to read the committed artifact.
+- An archive-capable Ethereum mainnet RPC, for the fork tests, the invariant suite, and the live demo. Without one, the unit tests still run (below).
+
+**Build and test**
+
+```bash
+git clone https://github.com/ivanmolto/freeboard && cd freeboard
+```
+```bash
+cp .env.example .env                     # then fill in MAINNET_RPC_URL and FORK_BLOCK=25900000
+```
+```bash
+yarn install --frozen-lockfile           # pulls swap-vm v1.0.2, aqua v1.0.0, forge-std, OpenZeppelin
+```
+```bash
+forge build                              # needs no RPC
+```
+```bash
+yarn test:unit                           # test/unit/*, needs no RPC
+```
+```bash
+forge test                               # all 140 tests: unit, mainnet fork, invariants
+```
+
+Every fork test reads `MAINNET_RPC_URL` and `FORK_BLOCK` from the environment in its `setUp` and forks mainnet at that block, so `forge test` fails in setup for every file under `test/fork/` and `test/invariants/` until `.env` is filled in. Foundry loads `.env` from the repository root by itself; `agent/anvil.sh` sources the same file. `FORK_BLOCK` must be at least `25618917`, the block the router was deployed at; the committed artifacts were produced at `25900000`, and `test_PricePath_MatchesTheCommittedArtifact` compares against them. `yarn test:fork` runs only `test/fork/*`.
+
+**The demo page and the live walk** are three commands in [section 3](#3-the-demo-page-the-target-moves); the anvil fork they start reads the same `.env`.
+
+**The keeper agent and the Ledger flow** have their own setup — `agent/package.json`, the `@ledgerhq/wallet-cli` install, the Key Ring and the keychain password — in [`agent/README.md`](agent/README.md). `DEPLOYER_PRIVATE_KEY` is read by `script/DeployExtruction.s.sol` alone, for the one-time mainnet deploy of the extruction; nothing else needs it.
+
+## 2. Deployed contracts
 
 Ethereum mainnet, chain id 1. Nothing of Freeboard's is a router or a registry; these are the 1inch contracts the strategy runs on, each matched to its tag by comparing the deployed runtime against a clean build. Pinned in [`src/constants/Addresses.sol`](src/constants/Addresses.sol), asserted on the fork by `test/fork/PinnedAddresses.t.sol`.
 
@@ -29,7 +66,7 @@ Ethereum mainnet, chain id 1. Nothing of Freeboard's is a router or a registry; 
 
 Fork tests need `FORK_BLOCK >= 25618917`; this repo pins `25900000`. `package.json` pins both tags exactly as matched: `github:1inch/swap-vm#v1.0.2` and `github:1inch/aqua#v1.0.0`. swap-vm itself declares aqua `0.1.0`, which yarn keeps nested under it; between the two aqua tags only `AquaRouter.sol` changed (Ownable + `rescueFunds`), the interfaces are byte-identical, and nothing here deploys `AquaRouter`. Note the aqua repo did not bump `package.json`'s `"version"` at `v1.0.0` — verify by the resolved commit in `yarn.lock` (`81c26e46…`), not by the version string.
 
-## 2. The demo page: the target moves
+## 3. The demo page: the target moves
 
 [`ui/`](ui/) is one page whose only job is to make the target visibly move. The curve the borrower signed is drawn as stacked target bands over the health factor; a cursor sits at Alice's health factor now; as the oracle moves the cursor slides and the target is wherever the cursor cuts the bands. The basket's actual shares ride the cursor as ticks and close onto the target as fills land; below, each leg is a solid bar over a ghost bar at its target; a badge walks green → amber → red on the curve's own rows (1.60, 1.30); the spread the borrower earned counts up fill by fill.
 
@@ -50,7 +87,7 @@ cd ui && npm install && npm run dev      # http://localhost:5173
 
 `ui/walk.sh` runs [`script/LivePricePath.s.sol`](script/LivePricePath.s.sol): the *same* `PricePathEngine` as the committed run — rungs, taker rule, fill, recording — with its three chain primitives (`_as`, `_deal`, `_warpTo`) overridden from cheatcodes to broadcast transactions, so nothing about the path is restated. The extruction is deployed from the engine's fixed deployer at nonce 0, so the strategy hash on the node is the artifact's, `0xf24c…267e`. Afterwards the script checks the node, not the simulation: the walk's report equals `results/price-path.txt` on every line but the transcript hash; the router emitted one `Swapped` per fill under that hash; Aqua holds the artifact's final basket. The transcript hash is allowed to differ, because anvil's clock runs: a few seconds of Aave interest between the borrow and the first read can shift the top health factor by one part in 1e11 and every number downstream by a few wei (one run did; the next matched the artifact wei for wei). Every fill, the spread and the final basket agree to the precision the artifact prints, and the final legs are compared at one part in 1e9.
 
-## 3. Hard questions
+## 4. Hard questions
 
 The questions this design gets asked, answered against the tests rather than asserted.
 Short versions here; the full set — including three things that are honestly
@@ -84,7 +121,7 @@ prices against the new target with nobody having written anything in between
 **Does it touch my debt?** Never. No supply, borrow or repay, and the Aave
 position itself is untouched — only what the basket beside the loan is made of.
 
-## 4. Ledger: the human approves the curve, an agent trades, the chain enforces
+## 5. Ledger: the human approves the curve, an agent trades, the chain enforces
 
 Three parties, and only one of them is trusted with the bound. The borrower approves the curve
 on a Ledger. An LLM agent decides what to fill. The deployed router decides what settles.
@@ -210,7 +247,7 @@ curve. The taker key it holds is a real key to the taker's float on the fork. An
 runs, its decrypted secrets sit in the process's memory, as any process's secrets must; the ring
 keeps them off disk and out of the environment, not out of RAM.
 
-## 5. Fail-safe: an unreadable health factor is a refused fill, not a price
+## 6. Fail-safe: an unreadable health factor is a refused fill, not a price
 
 `FreeboardExtruction` reads the maker's health factor from Aave v3's `getUserAccountData` inside the pricing path, on every quote and every swap. If that read fails — the pool reverts, answers the wrong shape, or has no code — the fill reverts with `FreeboardHealthFactorUnreadable(maker)`. There is no try/catch, no default, and no fallback row of the curve.
 
@@ -222,7 +259,7 @@ Separately, Aave's no-debt sentinel (`type(uint256).max`) is an answer, not a fa
 
 Both are pinned by [`test/unit/FailSafe.t.sol`](test/unit/FailSafe.t.sol): `test_RevertWhen_HealthFactorUnreadable` against a reverting mock pool, in both revert shapes found on mainnet, on both paths, on both sides, with nothing else read; and `test_NoDebt_PricesAtTopOfCurve`, to the wei, equal to HF 2.00 and everything above it and distinguishable from every leveraged row. `test/fork/HealthFactor.t.sol` shows the same refusal on the deployed router with real Aave positions.
 
-## 6. SwapVM's own invariant suite, on the deployed router
+## 7. SwapVM's own invariant suite, on the deployed router
 
 swap-vm ships an invariant suite for its instructions — `CoreInvariants.assertAllInvariantsWithConfig` in [`test/invariants/CoreInvariants.t.sol`](https://github.com/1inch/swap-vm/blob/v1.0.2/test/invariants/CoreInvariants.t.sol) at `v1.0.2`. [`test/invariants/FreeboardInvariants.t.sol`](test/invariants/FreeboardInvariants.t.sol) imports it from the pinned dependency and runs it against the Freeboard program — one `_extruction` to `FreeboardExtruction`, nothing else — on the deployed `AquaSwapVMRouter` and Aqua, over all six directed pairs of a WETH / WBTC / USDC basket, with the maker at HF 1.45 on Aave (targets interpolated between two rows). Every check runs; nothing is skipped. Raw output: [`results/invariants.txt`](results/invariants.txt).
 
@@ -239,10 +276,9 @@ swap-vm ships an invariant suite for its instructions — `CoreInvariants.assert
 
 The suite at `v1.0.2` has no strategy-liveness check; the nearest is the consistency check's non-zero-quote assertion, which runs on every amount, both sides, all six pairs.
 
-## 7. Toolchain
+## 8. Toolchain
 
-- Node 22 · yarn 1.22 · Foundry `forge 1.5.1-stable` · solc 0.8.30 (via foundry.toml)
-- `yarn install --frozen-lockfile && forge build && forge test`
+- Node 22 · yarn 1.22 · Foundry `forge 1.5.1-stable` · solc 0.8.30 (via foundry.toml). Install steps and the `.env` are in [section 1](#1-setup).
 - `forge test` runs 140 tests across 21 files: unit, mainnet-fork at block 25,900,000 with real Aave positions and real ERC-20 transfers, and swap-vm's own invariant suite against the Freeboard program on the deployed router. The agent run is judged separately by the 4 checks in [`results/agent-run.txt`](results/agent-run.txt).
 - Built with Claude Code as a pair programmer under the guardrails in [`CLAUDE.md`](CLAUDE.md), which is committed: read the real source before writing, no invented APIs, tests as the deliverable, and every commit made by hand. Every claim above names the test that pins it.
 - The page (`ui/`): Vite 8 · React 19 · viem 2.56.3 · TypeScript 5.9, pinned exactly in `ui/package.json`; `npm run build` type-checks and emits `ui/dist`. Hosted on Vercel with `ui` as the project's root directory (`ui/vercel.json`).
