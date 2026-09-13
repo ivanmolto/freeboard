@@ -71,8 +71,8 @@ export function PairedControl() {
       <h2>Same path, one instruction of difference</h2>
       <p className="lede">
         Same wallet, same Aave position, same oracle path HF 2.00 → 1.10, same taker, the same $80,000 through the deployed Aqua and
-        router. One instruction in the shipped program differs: swap-vm's stock constant-product swap, or Freeboard's curve. The stock
-        basket buys the falling asset and pays its takers to do it; Freeboard arrives at the bottom holding the debt asset, paid on the
+        router. One instruction in the shipped program differs: swap-vm's stock constant-product swap, or Freeboard Finance's curve. The stock
+        basket buys the falling asset and pays its takers to do it; Freeboard Finance arrives at the bottom holding the debt asset, paid on the
         way. Neither arm touches the debt, so the first two rows are the same number twice — the basket is not Aave collateral.
       </p>
       <table>
@@ -99,7 +99,7 @@ export function PairedControl() {
           <code>results/paired-control.txt</code>
         </a>
         , emitted by <code>script/PairedControl.s.sol</code> on the mainnet fork; every stock fill replayed against swap-vm's own
-        <code> XYCSwap.sol</code> to the wei. The last two rows are her own action, taken identically in both arms — Freeboard never
+        <code> XYCSwap.sol</code> to the wei. The last two rows are her own action, taken identically in both arms — Freeboard Finance never
         repays; it puts the USDC in her hand.
       </p>
     </section>
@@ -122,12 +122,12 @@ const QUESTIONS: { q: string; a: string; test?: string }[] = [
   },
   {
     q: "Isn't this a stop-loss?",
-    a: "A price floor stops you trading at the moment you most need to trade — the same cliff as a liquidation trigger. Freeboard has no level at which it refuses; it re-prices, so the deleveraging direction gets progressively cheaper as the health factor falls.",
+    a: "A price floor stops you trading at the moment you most need to trade — the same cliff as a liquidation trigger. Freeboard Finance has no level at which it refuses; it re-prices, so the deleveraging direction gets progressively cheaper as the health factor falls.",
     test: "test_AsHealthFactorFalls_TheDeleveragingFillBecomesTheCheapOne",
   },
   {
     q: "Why no keeper or enclave in the pricing path?",
-    a: "Each is a liveness dependency on a liquidation guard. Freeboard has no writer: move the oracle and the next fill prices against the new target with nobody having written anything in between.",
+    a: "Each is a liveness dependency on a liquidation guard. Freeboard Finance has no writer: move the oracle and the next fill prices against the new target with nobody having written anything in between.",
     test: "test_EndToEnd_TheNextFillPricesAgainstTheNewTarget_WithNobodyWritingInBetween",
   },
   {
@@ -137,7 +137,7 @@ const QUESTIONS: { q: string; a: string; test?: string }[] = [
   },
   {
     q: "Does it touch my debt?",
-    a: "Never. No supply, borrow or repay — only what the collateral is made of.",
+    a: "Never. No supply, borrow or repay, and the Aave position itself is untouched — only what the basket beside the loan is made of.",
   },
 ];
 

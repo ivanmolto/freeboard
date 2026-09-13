@@ -8,7 +8,7 @@
   --green: #3ad07a;
   --amber: #f2b633;
   --red: #ef5a5a;
-  font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  font-family: Geist, ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
   font-size: 15px;
 }
 * {
@@ -20,7 +20,7 @@ body {
   color: var(--text);
 }
 code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9em;
   color: var(--muted);
 }

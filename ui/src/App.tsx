@@ -46,7 +46,7 @@ export function App() {
     <div className="app">
       <header>
         <div>
-          <h1>Freeboard</h1>
+          <h1>Freeboard Finance</h1>
           <p className="tagline">
             The basket's target is a function of the health factor. Watch the <b>target</b> move as HF falls — the basket follows it, and the
             borrower is paid a spread for every step.
