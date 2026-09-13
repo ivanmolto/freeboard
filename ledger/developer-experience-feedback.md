@@ -106,8 +106,8 @@ Each of these cost us time; each is a sentence or a paragraph to fix.
    by the undocumented `EXPLORER` env. Consequence: a device-signed transaction cannot be pointed
    at a fork, a testnet-like local node, or a custom RPC. That decided our architecture (the ship
    went to real mainnet; the fills stayed on a fork). Nothing in the docs says it. One sentence
-   under `send` — "signs and broadcasts through Ledger's backend; no sign-only output; mainnet
-   only for Ethereum" — would have saved the spike.
+   under `send` — "signs and broadcasts through Ledger's backend; no sign-only output; always the
+   account's real network, never a fork or a local node" — would have saved the spike.
 
 3. **The Speculos / Key Ring question was asked on Discord.** The
    answer is in one line: `src/device/register-dmk-transport.ts:28`
@@ -195,15 +195,23 @@ The one screenshot that matters — the Nano X screen during the blind-signed `s
 **PR 1 — ledger-live, `.agents/skills/ledger-wallet-cli/SKILL.md`, `send` section.** The
 `--data` flag and a zero-value example are already there on `develop` (see gap 1). What is
 missing is the rule and the consequence, appended after the `#### Contract calls with --data`
-example:
+example. Opened Sep 13 as issue
+[#21908](https://github.com/LedgerHQ/ledger-live/issues/21908) and PR
+[#21909](https://github.com/LedgerHQ/ledger-live/pull/21909); two rounds of Copilot review,
+each citing source (`--data 0x` is a plain transfer, not a contract call; `send` on testnets is
+out of the skill's scope, so no Sepolia example; no `dmk` skill exists in ledger-live, so the DMK
+docs are linked), ended in "Approval recommended". The text as it stands in the PR:
 
 ```markdown
-A zero-value call is allowed whenever `--data` is present (`--amount '0 ETH'`). The account can
-be positional or `--account`.
+A zero-value call is allowed whenever `--data` carries non-empty calldata (`--amount '0 ETH'`).
+An empty `--data 0x` does not make the transaction a contract call: with a non-zero amount it is a
+plain transfer; with a zero amount it is rejected with `AmountRequired`. The account can be
+positional or `--account`.
 
 `send` signs **and** broadcasts through Ledger's backend. There is no sign-only output and no
-custom RPC: Ethereum transactions go to mainnet. For a fork or a local node, use the DMK
-directly (see the `dmk` skills).
+custom RPC: the transaction goes to the account's real network. For a fork or a local node, use the
+[Device Management Kit](https://developers.ledger.com/docs/device-interaction/integration/how_to/dmk)
+directly.
 ```
 
 **PR 2 — portal CLI page, prerequisites:**
@@ -215,24 +223,42 @@ and `genuine-check` need a physical device. `ring encrypt/decrypt` need no devic
 ```
 
 **PR 3 — ledger-live, `.agents/skills/ledger-wallet-cli/SKILL.md`, `ring` section**, between the
-command block and the "Always provision with a password" callout (the mirror's line 257):
+command block and the "Always provision with a password" callout (the mirror's line 257). Opened
+Sep 13 as issue [#21910](https://github.com/LedgerHQ/ledger-live/issues/21910) and PR
+[#21911](https://github.com/LedgerHQ/ledger-live/pull/21911); one Copilot round (the `--out` write
+is atomic on POSIX only — `writeSecureFile`'s Windows fallback is delete-then-rename), then
+"Approval recommended". The text as it stands in the PR:
 
 ```markdown
-`--input`/`--out` default to stdin/stdout, so `wallet-cli ring decrypt --key K < file.ring`
-writes the raw plaintext to stdout and nothing else; progress goes to stderr. `--output json`
-is refused when writing plaintext to stdout. `ring init --unsecure-no-password` exists for
-throwaway CI rings only — never for a ring that holds a real secret.
+`--input`/`--out` default to stdin/stdout, so `ring decrypt --key K < secrets.ring` writes the raw
+plaintext bytes to stdout and nothing else; spinners and the password prompt go to stderr, so stdout
+can be piped or captured as-is. With no `--input` and a TTY on stdin the command refuses
+(`No input: provide --input FILE or pipe data to stdin.`). `--output json` is refused unless `--out
+<file>` is given — binary data cannot be written as JSON to stdout. A file written with `--out` is
+created at 0600 and renamed into place: atomic on POSIX, best-effort (delete then rename) on Windows.
+`ring init --unsecure-no-password` exists and stores the private key unencrypted
+in the OS keychain; the rule below applies — never use it for a ring that will hold a real secret.
 ```
 
 **PR 4 — the device screen for a `--data` call.** Two halves. (a) ledger-live's canonical skill
-currently ends the `--data` section with "review the decoded call on-device before approving" —
-but a call without a clear-signing descriptor is *blind-signed*: nothing is decoded on the
-device. Replace that sentence with what the signer actually sees and must check: the
-destination address and a blind-signing warning; for a zero-value call **no amount line** (the
-host prints `Amount: 0 ETH`, the device does not); verify the address, reject anything else;
-Blind signing is app-wide — enable it for the call and disable it after. (b) The portal: the
-same paragraph plus one photo per device family. Our photo — the Ethereum app showing the Aqua
-address during the mainnet `ship()` — is attached to the PR.
+currently ends the `--data` section with "review the decoded call on-device before approving".
+That holds for the section's own WETH example — WETH has a descriptor in the ERC-7730
+clear-signing registry — and for nothing else: a contract without a descriptor is *blind-signed*
+and nothing is decoded. Opened Sep 13 as issue
+[#21912](https://github.com/LedgerHQ/ledger-live/issues/21912) and PR
+[#21913](https://github.com/LedgerHQ/ledger-live/pull/21913), stacked on #21909 because it edits
+the sentence those paragraphs sit under; Copilot recommended approval on the first pass. The
+sentence is split into the two cases, and the blind-signed one says what the Nano X actually
+shows, screen by screen: "Blind signing ahead", To, From, Max fees, a two-screen Transaction
+Hash, then Accept and send / Reject — no decoded fields and, for a zero-value call, **no Amount
+screen** (the host prints `Amount: 0 ETH`; the device does not); verify the To address, reject
+anything else; Blind signing is app-wide — enable it for the call, disable it after; a button
+Nano has no Transaction Check, so the address check is the whole check. (b) The portal: the same
+paragraph plus one photo per device family. Our photo — the Nano X Ethereum app reviewing this
+exact call: the warning, From and To — is attached to the PR:
+
+<img src="../photos/nano-x-blind-signed-call.png" width="420" alt="Nano X, Ethereum app, blind-signed contract call: the Blind signing ahead warning, the From address 0x380436…aC4c, the To address 0x1111113C…a90a (Aqua). No Amount screen.">
+
 
 **PR 5 — ledger-live, `apps/wallet-cli/bin/wallet-cli`: not a version guard, a one-line fix.**
 The launcher's only Node-specific line is `require("node:child_process")`; the binary it spawns
@@ -321,7 +347,8 @@ the most time:
 
 1. **Read `apps/wallet-cli/src/commands/send.ts` and `sign-and-broadcast.ts` before designing.**
    Twenty minutes there answers: calldata yes, zero value yes, sign-only no, custom RPC no,
-   Ethereum mainnet only. Everything downstream depends on those five answers.
+   always the account's real network, never a fork. Everything downstream depends on those five
+   answers.
 2. **`ring` does not sign. It encrypts.** Plan the human approval around `send` and the agent's
    secrets around `ring`; they are two unrelated tools in one binary.
 3. **Physical device or nothing for wallet-cli.** Do not spend a day on Speculos for the Key Ring.
