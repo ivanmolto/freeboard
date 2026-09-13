@@ -243,4 +243,6 @@ The suite at `v1.0.2` has no strategy-liveness check; the nearest is the consist
 
 - Node 22 · yarn 1.22 · Foundry `forge 1.5.1-stable` · solc 0.8.30 (via foundry.toml)
 - `yarn install --frozen-lockfile && forge build && forge test`
+- `forge test` runs 140 tests across 21 files: unit, mainnet-fork at block 25,900,000 with real Aave positions and real ERC-20 transfers, and swap-vm's own invariant suite against the Freeboard program on the deployed router. The agent run is judged separately by the 4 checks in [`results/agent-run.txt`](results/agent-run.txt).
+- Built with Claude Code as a pair programmer under the guardrails in [`CLAUDE.md`](CLAUDE.md), which is committed: read the real source before writing, no invented APIs, tests as the deliverable, and every commit made by hand. Every claim above names the test that pins it.
 - The page (`ui/`): Vite 8 · React 19 · viem 2.56.3 · TypeScript 5.9, pinned exactly in `ui/package.json`; `npm run build` type-checks and emits `ui/dist`. Hosted on Vercel with `ui` as the project's root directory (`ui/vercel.json`).
