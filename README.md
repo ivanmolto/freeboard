@@ -2,7 +2,7 @@
 
 Freeboard is the distance from the waterline to the deck — the margin a vessel has before it takes water.
 
-Freeboard is a collateral basket whose definition of balanced depends on how much debt is riding on it. A borrower's health factor is its freeboard: as it falls, the basket rebalances itself toward safety, and traders pay a spread to do it.
+Freeboard is a basket beside an Aave loan whose definition of balanced depends on how much debt is riding on it. A borrower's health factor is its freeboard: as it falls, the basket rebalances itself toward safety, and traders pay a spread to do it.
 
 Built on 1inch Aqua and SwapVM. The strategy executes on the deployed `AquaSwapVMRouter` (`0x111111338c5091E8440b67B168bAe16a668AC0De`, tag `v1.0.2`) through its own `_extruction` instruction. No SwapVM source is modified.
 
@@ -81,8 +81,8 @@ liquidation guard. Freeboard has no writer: move the oracle and the next fill
 prices against the new target with nobody having written anything in between
 (`test_EndToEnd_TheNextFillPricesAgainstTheNewTarget_WithNobodyWritingInBetween`).
 
-**Does it touch my debt?** Never. No supply, borrow or repay — only what the
-collateral is made of.
+**Does it touch my debt?** Never. No supply, borrow or repay, and the Aave
+position itself is untouched — only what the basket beside the loan is made of.
 
 ## 4. Ledger: the human approves the curve, an agent trades, the chain enforces
 

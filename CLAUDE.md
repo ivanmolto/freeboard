@@ -1,8 +1,8 @@
 ## §A Shared context
 
 ```
-PROJECT: Freeboard — a collateral basket that rebalances itself toward safety
-as health factor falls, and gets paid a spread to do it. Freeboard is the
+PROJECT: Freeboard — a basket beside an Aave loan that rebalances itself toward
+safety as health factor falls, and gets paid a spread to do it. Freeboard is the
 distance from the waterline to the deck: the margin before a vessel takes
 water. A borrower's health factor is freeboard.
 
@@ -99,8 +99,9 @@ opcodes + one _extruction, LAST in the byte stream, with NO fee opcode
 after it).
 
 WHAT FREEBOARD NEVER DOES
-Never touches the debt. No supply, borrow or repay. It only changes what the
-collateral is made of. Do not scope-creep into lending flows.
+Never touches the debt, and never touches the Aave position. No supply, borrow
+or repay. It only changes what the basket beside the loan is made of. Do not
+scope-creep into lending flows.
 
 REPOS
 - github.com/1inch/swap-vm — pinned to tag v1.0.2 (commit 32c687c). This is
